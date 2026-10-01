@@ -11,6 +11,8 @@ import { calendarRoutes } from "./routes/calendar.routes.js";
 import { mailRoutes } from "./routes/mail.routes.js";
 import { notificationRoutes } from "./routes/notification.routes.js";
 import { fileRoutes } from "./routes/file.routes.js";
+import { approvalRoutes } from "./routes/approval.routes.js";
+import { insightsRoutes } from "./routes/insights.routes.js";
 import { mcpRoutes } from "./mcp/http.js";
 import { statusOf, toErrorBody } from "./lib/errors.js";
 
@@ -28,6 +30,8 @@ import { statusOf, toErrorBody } from "./lib/errors.js";
  *   /api/mail          direct Gmail REST (no LLM)
  *   /api/notifications list, mark read, live SSE feed
  *   /api/files         download generated documents and images
+ *   /api/approvals     human-in-the-loop: approve or reject a proposed action
+ *   /api/insights      latency, cost and guardrail telemetry
  *   /mcp               Model Context Protocol, for external hosts
  */
 
@@ -60,8 +64,10 @@ app.get("/health", async (_req, res) => {
       service: "cortex-one",
       database: "up",
       llmProvider: env.llmProvider,
+      llmFallback: env.llmFallbackProvider ?? "none",
       googleOAuth: googleOAuthConfigured ? "configured" : "missing",
       webSearch: env.tavilyApiKey ? "configured" : "missing",
+      guardrails: "active",
     });
   } catch {
     res.status(503).json({ status: "error", database: "down" });
@@ -75,6 +81,8 @@ app.use("/api/calendar", calendarRoutes);
 app.use("/api/mail", mailRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/files", fileRoutes);
+app.use("/api/approvals", approvalRoutes);
+app.use("/api/insights", insightsRoutes);
 app.use("/mcp", mcpRoutes);
 
 app.use((_req, res) => {

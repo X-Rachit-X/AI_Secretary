@@ -17,7 +17,9 @@
     "start": "npm run start -w server",
     "db:push": "npm run db:push -w server",
     "db:studio": "npm run db:studio -w server",
-    "mcp": "npm run mcp -w server"
+    "mcp": "npm run mcp -w server",
+    "eval": "npm run eval -w server",
+    "eval:live": "npm run eval:live -w server"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

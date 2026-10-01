@@ -2,7 +2,7 @@
 
 Every file, what it does, and what it depends on. Use this as a map while you write.
 
-**Total: 66 source files** — 38 server, 23 web, 5 docs.
+**Total: 85 source files** — 52 server, 26 web, 7 docs.
 
 ---
 
@@ -22,12 +22,14 @@ cortex-one/
 │       ├── db.ts             the Prisma client singleton
 │       ├── lib/              errors, SSE, storage, time
 │       ├── auth/             Google OAuth, sessions, the auth gate
+│       ├── guardrails/       policy, input, output, tool gate, trust boundary
 │       ├── google/           Calendar and Gmail, framework-free
-│       ├── ai/               the graph, agents, tools, models
+│       ├── ai/               the graph, agents, tools, models, gateway
 │       ├── generators/       PDF and PPTX rendering
-│       ├── services/         conversations, credits, limits, alerts, cron
+│       ├── services/         conversations, credits, limits, alerts, cron, traces
 │       ├── routes/           the HTTP surface
-│       └── mcp/              Model Context Protocol server
+│       ├── mcp/              Model Context Protocol server
+│       └── evals/            the eval harness and its suites
 │
 └── web/                      React + TypeScript + Vite
     └── src/
@@ -37,7 +39,7 @@ cortex-one/
         ├── lib/              API client, SSE reader, types
         ├── store/            Zustand stores
         ├── components/       layout + chat pieces
-        └── pages/            the five screens
+        └── pages/            the six screens
 ```
 
 ---
@@ -50,7 +52,7 @@ cortex-one/
 | **`db.ts`** | The Prisma client singleton | Cached on `globalThis` because `tsx watch` re-imports modules on save, and a fresh client per reload leaks connections until SQLite refuses to open another. |
 | **`app.ts`** | Express app: CORS, JSON, cookies, the route table, the error handler | Separate from `index.ts` so a test can import the app without starting a listener or a cron job. |
 | **`index.ts`** | `listen()`, start the scheduler, handle SIGINT/SIGTERM | Prints a startup banner showing what is and is not configured. Half of all "why isn't this working" time goes on a missing key. |
-| **`prisma/schema.prisma`** | 7 models: User, GoogleAccount, Preference, Conversation, Message, Notification, StoredFile | Switch `provider` to `postgresql` and nothing else changes. |
+| **`prisma/schema.prisma`** | 9 models: User, GoogleAccount, Preference, Conversation, Message, Notification, StoredFile, PendingAction, Trace | Switch `provider` to `postgresql` and nothing else changes. |
 
 ### `lib/`
 
@@ -77,16 +79,43 @@ cortex-one/
 | **`calendar.ts`** | `listMeetings`, `getMeeting`, `createMeeting`, `rescheduleMeeting`, `cancelMeeting`, `checkBusy`, `findFreeSlot` | `singleEvents: true` expands a recurring event into occurrences, which is what "my next three meetings" should mean. `conferenceDataVersion: 1` is required for Google to actually mint the Meet link. |
 | **`gmail.ts`** | `listMail`, `readMail`, `sendMail`, `replyToMail`, `markMailRead`, `mailStats` | Bodies arrive base64url-encoded in a nested MIME tree, so `extractBody` walks it: prefers `text/plain`, falls back to `text/html` with tags stripped. Replying needs `threadId` **plus** `In-Reply-To`, or Gmail shows it as a new conversation. |
 
+### `guardrails/`
+
+The safety layer. Read [06-GUARDRAILS.md](06-GUARDRAILS.md) for why it is shaped
+this way; this is what each file does.
+
+| File | What it does | The detail worth knowing |
+|---|---|---|
+| **`policy.ts`** | Every threshold, pattern and tool list in one object | A reviewer can audit the whole policy in one screen, and tuning it never means touching enforcement logic. |
+| **`input.guard.ts`** | Redacts credentials, blocks 3 intents, flags injection phrasing | Credentials are **redacted, not blocked** - a pasted stack trace should still get help. There is no PII redaction on purpose: email addresses are the subject matter here. |
+| **`untrusted.ts`** | Wraps third-party content so the model reads it as data | The fence is a random string, and occurrences inside the content are filtered, so a crafted email cannot close the block early. |
+| **`tool.guard.ts`** | The approval gate: `send_mail`, `reply_to_mail`, `cancel_meeting` propose instead of acting | The only guardrail that is not advisory. Also holds the per-turn write budget, keyed on a `turnId` so counts cannot leak between turns. |
+| **`output.guard.ts`** | Catches prompt leaks, tool-sourced secrets, unsafe link schemes | A leaked system prompt replaces the whole answer rather than being patched. Runs **before persistence**, not just before display. |
+| **`index.ts`** | The barrel, plus the diagram of the four layers | |
+
+### `evals/`
+
+| File | What it does |
+|---|---|
+| **`types.ts`** | `Suite`, `CaseResult`, and the offline/live split |
+| **`guardrails.eval.ts`** | 26 cases. Includes 5 **false-positive guards** - inputs that must NOT trip a rule |
+| **`parsers.eval.ts`** | 14 cases. The deck and document parsers must *degrade*, not throw; plus vector-store edge cases |
+| **`router.eval.ts`** | 21 live cases for routing accuracy, and 4 offline ones for attachment routing |
+| **`run.ts`** | The runner. `npm run eval` for offline, `-- --live` to add model calls. Exit 1 on failure, so it gates CI |
+
 ---
 
 ## 2.3 Server — the AI layer
 
 | File | What it does | The detail worth knowing |
 |---|---|---|
-| **`ai/models.ts`** | `getModel(role)` + `getEmbeddings()` | Agents ask by **role** (`"router"`, `"vision"`), never by provider. Temperature is 0 where output is parsed by code, warmer where it is prose for a human. Models are cached per role. |
+| **`ai/gateway.ts`** | `invokeModel()` - cache, timeout, retry, fallback, cost | The single door every model call goes through. `UsageMeter` flows through graph state, so the eight calls inside a ReAct loop all add to one total. |
+| **`ai/pricing.ts`** | USD per million tokens, per model | Cost is computed in one place from provider-reported counts. An unlisted model costs 0, which shows up as a suspiciously free agent on Insights. |
+| **`ai/models.ts`** | `getModel(role)`, `getFallbackModel(role)`, `getEmbeddings()` | Agents ask by **role** (`"router"`, `"vision"`), never by provider. Temperature is 0 where output is parsed by code, warmer where it is prose for a human. Models are cached per role. |
 | **`ai/state.ts`** | The `GraphState` annotation | Read this first when you want to understand the graph. Every node reads it and returns a partial update. |
 | **`ai/router.node.ts`** | Picks one agent | Three stages, cheapest first — see [01-ARCHITECTURE §1.4](01-ARCHITECTURE.md#how-the-router-decides--three-stages-cheapest-first). Parses the first valid word from the reply, because models answer `"Search."` and `"agent: coding"` often enough that a bare match is unsafe. |
 | **`ai/graph.ts`** | Wires nodes and edges, compiles once | Compilation validates the wiring, so a typo in a destination fails at boot rather than mid-conversation. Also exports `AGENT_CATALOG`, which the UI picker reads — the list can never drift from the graph. |
+| **`ai/tools/context.ts`** | `ToolContext`, `tracked()`, `untrusted()` | Tools are built per run so they close over *this* turn's identity. `tracked()` returns tool errors as strings rather than throwing, so one failed call does not abort the ReAct loop. |
 | **`ai/vector-store.ts`** | ~100-line cosine-similarity vector store | LangChain v1 dropped `MemoryVectorStore`, and running Qdrant for one throwaway document is operations work for nothing. This is also the clearest possible explanation of what retrieval actually is. |
 
 ### `ai/tools/`
@@ -131,6 +160,7 @@ cortex-one/
 | **`ratelimit.service.ts`** | Fixed-window counter per user per agent | In-memory `Map` with a sweep interval, `unref`'d so it does not hold the event loop open. |
 | **`conversation.service.ts`** | Conversation CRUD + `recentHistory()` + `autoTitle()` | `assertOwned()` guards every function and answers **404**, never 403. |
 | **`notification.service.ts`** | DB write + `EventEmitter` fan-out | `dedupeKey` turns a repeat into a no-op, which is what makes a 5-minute sweep safe. |
+| **`trace.service.ts`** | One row per run; `getInsights()` aggregates | Deliberately boring - a table and two queries, not a tracing SDK. Writes are wrapped: telemetry never fails a request. |
 | **`scheduler.service.ts`** | The `node-cron` sweep | One user's expired grant must not stop the sweep for everyone else, so each call is individually caught. |
 
 ### `routes/`
@@ -144,6 +174,8 @@ cortex-one/
 | **`mail.routes.ts`** | messages, read, send, reply, stats | no |
 | **`notification.routes.ts`** | list, mark read, clear, sweep, `GET /stream` (SSE) | no |
 | **`file.routes.ts`** | list + download generated files | no |
+| **`approval.routes.ts`** | list, approve, reject a proposed action | **never** |
+| **`insights.routes.ts`** | telemetry summary, traces, live policy | no |
 
 `agent.routes.ts` is the one worth reading closely. Order of operations matters:
 
@@ -151,11 +183,20 @@ cortex-one/
 2. open the SSE stream **before** invoking the graph, so progress events can be sent while it runs
 3. delete the upload in `finally`, whichever agent ran and however it ended
 
+It also brackets the run with guardrails: the input guard runs **before** the
+stream opens (so a rejection is a plain 422), and the output guard runs before the
+answer is **persisted**, not just before it is shown.
+
+`approval.routes.ts` is the other file worth reading closely. Its defining
+property is that **no model is involved**: it loads the stored arguments the user
+actually saw and calls the Google function directly, so nothing can change what
+runs after they agreed to it.
+
 ### `mcp/`
 
 | File | What it does |
 |---|---|
-| **`mcp.tools.ts`** | Registers 10 tools on an `McpServer`, reusing `google/`. MCP handlers return a `content` array of typed blocks, not a bare string — the one shape difference from the LangChain tools. |
+| **`mcp.tools.ts`** | Registers 10 tools on an `McpServer`, reusing `google/`. **Carries the same guardrails as the in-app agent** — listings wrapped as untrusted, `send_mail` and `cancel_meeting` propose rather than act. Skipping them would be a hole straight through the policy. |
 | **`http.ts`** | `POST /mcp` over Streamable HTTP. Stateless: a fresh server per request, so a restart never strands a client. |
 | **`stdio.ts`** | `npm run mcp` for Claude Desktop / Cursor. **stdout is the protocol channel**, so every log here goes to stderr. |
 
@@ -183,7 +224,10 @@ cortex-one/
 | **`pages/Calendar.tsx`** | List + create + cancel | `datetime-local` has no timezone, so `new Date(value)` reads it as local and `toISOString()` converts to the UTC instant Google wants. |
 | **`pages/Mail.tsx`** | Two-pane inbox | The search box takes raw Gmail query syntax — the same strings the agent's `search_mail` tool builds. |
 | **`pages/Notifications.tsx`** | The alert centre | Kept live by the SSE subscription in `App.tsx`. "Check now" triggers the sweep instead of waiting for the cron. |
+| **`components/chat/ApprovalCard.tsx`** | Approve / reject an irreversible action | Shows the **full stored payload**, not the agent's summary of it — the summary is exactly what an injected instruction would have tampered with. |
+| **`components/chat/UsageStrip.tsx`** | Tokens, cost, calls and guardrail flags under the last answer | A turn that quietly made nine model calls looks identical to one that made one. |
 | **`pages/Files.tsx`** | Everything generated | Permanent index — links never expire, unlike presigned URLs. |
+| **`pages/Insights.tsx`** | Cost, latency, guardrail activity, gateway state, live policy | The policy panel reads from the server, so the UI cannot drift from what is enforced. |
 
 ---
 
@@ -193,13 +237,21 @@ Nothing below ever imports from above. If you find yourself wanting to, somethin
 
 ```mermaid
 graph TD
-    R["routes/ · mcp/"] --> S["services/"]
+    R["routes/ · mcp/"] --> GR["guardrails/"]
+    R --> S["services/"]
     R --> AI["ai/"]
+    AI --> GR
+    AI --> GW["ai/gateway.ts"]
+    GW --> M["ai/models.ts"]
+    GW --> PR["ai/pricing.ts"]
     AI --> S
     AI --> G["google/"]
     AI --> GEN["generators/"]
+    EV["evals/"] --> GR
+    EV --> AI
+    GR --> DB["db.ts"]
     S --> G
-    S --> DB["db.ts"]
+    S --> DB
     G --> AUTH["auth/"]
     AUTH --> DB
     GEN --> LIB["lib/"]
@@ -208,4 +260,8 @@ graph TD
     G --> LIB
     DB --> ENV["env.ts"]
     LIB --> ENV
+    M --> ENV
 ```
+
+`evals/` sits outside the runtime graph: it imports the guardrails and the router
+to measure them, and nothing imports it back.

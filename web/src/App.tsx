@@ -9,6 +9,7 @@ import Calendar from "./pages/Calendar";
 import Mail from "./pages/Mail";
 import Notifications from "./pages/Notifications";
 import Files from "./pages/Files";
+import Insights from "./pages/Insights";
 
 /**
  * Routing and the auth gate.
@@ -99,6 +100,15 @@ export default function App() {
         element={
           <Protected>
             <Files />
+          </Protected>
+        }
+      />
+
+      <Route
+        path="/insights"
+        element={
+          <Protected>
+            <Insights />
           </Protected>
         }
       />

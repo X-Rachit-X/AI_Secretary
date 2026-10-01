@@ -20,14 +20,16 @@ Plus what neither had: **Gmail** and **notifications**.
 ```mermaid
 graph TB
     subgraph Browser["Browser — React + TypeScript"]
-        UI["Chat · Calendar · Mail · Alerts · Files"]
+        UI["Chat · Calendar · Mail · Alerts · Files · Insights"]
     end
 
     subgraph Server["Node + Express + TypeScript (one process)"]
         direction TB
-        R["Routes<br/>/api/auth /api/chat /api/agent<br/>/api/calendar /api/mail /api/notifications"]
+        R["Routes<br/>/api/auth /api/chat /api/agent /api/calendar<br/>/api/mail /api/notifications /api/approvals /api/insights"]
+        GR["Guardrails<br/>input · trust · tool · output"]
         G["LangGraph supervisor<br/>router + 9 agents"]
-        S["Services<br/>conversations · credits · rate limit<br/>notifications · scheduler"]
+        GW["LLM gateway<br/>cache · timeout · retry · fallback · cost"]
+        S["Services<br/>conversations · credits · rate limit<br/>notifications · scheduler · traces"]
         GO["Google layer<br/>calendar.ts · gmail.ts"]
         MCP["MCP server<br/>stdio + HTTP"]
     end
@@ -42,12 +44,15 @@ graph TB
     FS[("storage/ — generated files")]
 
     UI -->|"fetch + SSE"| R
-    R --> G
+    R --> GR
+    GR --> G
     R --> S
     G --> S
     G --> GO
-    G --> LLM
+    G --> GW
+    GW --> LLM
     G --> TAV
+    MCP --> GR
     MCP --> GO
     GO --> GAPI
     S --> DB
@@ -70,6 +75,9 @@ graph TB
 | Qdrant vector DB | `ai/vector-store.ts`, ~100 lines | A document you throw away after one question does not need a database. |
 | AWS S3 + presigned URLs | `storage/` on disk + `/api/files/:id` | No AWS account, and links in old transcripts never expire. |
 | Razorpay billing | Credit wallet only | The wallet mechanics are the interesting part; payments need a merchant account. `grantCredits()` is the hook if you add one. |
+| Nothing (new) | Four-layer guardrails | The agent reads attacker-controlled email. See [06-GUARDRAILS](06-GUARDRAILS.md). |
+| Nothing (new) | LLM gateway | Retry, timeout, fallback, cache and cost accounting in one place. |
+| Nothing (new) | Eval harness | 44 offline cases that run with no API key. See [07-EVALS](07-EVALS.md). |
 | Mastra agent framework | LangGraph `createReactAgent` | One agent framework instead of two. |
 | Next.js frontend | Vite + React | No SSR needed for an authenticated single-page app; Vite starts in under a second. |
 
@@ -380,9 +388,59 @@ sequenceDiagram
 | Upload abuse | 20 MB cap, PDF and images only, deleted in a `finally` block |
 | Quota abuse | per-user per-agent rate limit, then the credit wallet |
 
-## 1.13 Where to go next
+## 1.13 Guardrails: four layers, one of them hard
+
+The agent reads the user's email, which means **anyone on the internet can put
+text into its context**. That single fact shapes the safety design.
+
+```mermaid
+flowchart LR
+    I["1 INPUT<br/>redact secrets<br/>flag injection"] --> TR["2 TRUST<br/>wrap third-party<br/>content as data"]
+    TR --> TO["3 TOOL<br/>human approval for<br/>irreversible actions"]
+    TO --> O["4 OUTPUT<br/>prompt leaks<br/>unsafe links"]
+
+    style TO fill:#1e3a8a,color:#fff
+```
+
+Layers 1, 2 and 4 are text analysis and can be talked around. **Layer 3 cannot**:
+`send_mail`, `reply_to_mail` and `cancel_meeting` write a `PendingAction` row
+instead of acting, and a human approves it. The server then executes the stored
+arguments with **no model involved**, so what runs is exactly what the user read.
+
+MCP gets the same gate — otherwise it would be a hole straight through the policy.
+
+Full detail in [06-GUARDRAILS.md](06-GUARDRAILS.md).
+
+## 1.14 The LLM gateway
+
+Every model call goes through `invokeModel()` in
+[`ai/gateway.ts`](../server/src/ai/gateway.ts) rather than `model.invoke()`:
+
+| | |
+|---|---|
+| **cache** | temperature-0 roles only (the router) |
+| **timeout** | a hung provider cannot hold a request open |
+| **retry** | transient errors only, exponential backoff with jitter |
+| **fallback** | a second provider when the first keeps failing |
+| **accounting** | tokens and cost into a per-run `UsageMeter` |
+
+`LLM_PROVIDER=openrouter` uses a hosted gateway instead; the in-process one still
+applies on top.
+
+## 1.15 Observability
+
+One `Trace` row per run — agent, latency, tokens, cost, guardrail flags — and an
+**Insights** page that answers three questions an agent app cannot answer by
+default: what is this costing, which agent is slow, and which guardrails are
+actually firing.
+
+A guardrail nobody can see is a guardrail nobody will maintain.
+
+## 1.16 Where to go next
 
 - [02-FILE-GUIDE.md](02-FILE-GUIDE.md) — what every file does
 - [03-BUILD-ORDER.md](03-BUILD-ORDER.md) — the order to write them in
 - [04-DATA-FLOWS.md](04-DATA-FLOWS.md) — six requests traced end to end
 - [05-SETUP.md](05-SETUP.md) — keys, OAuth and running it
+- [06-GUARDRAILS.md](06-GUARDRAILS.md) — the four layers, and the attack that shapes them
+- [07-EVALS.md](07-EVALS.md) — the eval harness, the gateway and observability

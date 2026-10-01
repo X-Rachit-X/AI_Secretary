@@ -58,6 +58,25 @@ Pick one. The app is provider-agnostic; `LLM_PROVIDER` chooses at boot.
 | OpenAI | <https://platform.openai.com/api-keys> | Paid. |
 | Groq | <https://console.groq.com/keys> | Free tier, very fast. **No vision support.** |
 | Anthropic | <https://console.anthropic.com/> | Paid. |
+| **OpenRouter** | <https://openrouter.ai/keys> | A hosted LLM *gateway*: one key in front of hundreds of models, with its own failover. Set `LLM_PROVIDER=openrouter`. |
+
+### Gateway settings (all optional)
+
+```bash
+# Try a second provider when the primary keeps failing. Must differ from
+# LLM_PROVIDER to have any effect.
+LLM_FALLBACK_PROVIDER=groq
+
+# Hard ceiling on one model call. A hung provider cannot stall a request.
+LLM_TIMEOUT_MS=60000
+
+# Retries on transient failures (429, 5xx) before the fallback is tried.
+LLM_MAX_RETRIES=2
+```
+
+These are applied by the in-process gateway in
+[`ai/gateway.ts`](../server/src/ai/gateway.ts), and they apply **on top of**
+OpenRouter if you use it. The two are not alternatives.
 
 > `GOOGLE_API_KEY` is used for **embeddings regardless of provider**, because
 > document Q&A needs them and Gemini is the one with a free embedding tier. If
@@ -178,7 +197,14 @@ npm run build          # typecheck and build both
 npm run db:push        # apply schema.prisma to the database
 npm run db:studio      # browse the data in a GUI
 npm run mcp            # MCP stdio server
+
+npm run eval           # 44 offline eval cases: guardrails + parsers. No API key.
+npm run eval:live      # also router accuracy (costs a few model calls)
 ```
+
+Run `npm run eval` after touching anything in `server/src/guardrails/` or either
+output parser. It takes under a second and needs no credentials, so there is no
+reason to skip it.
 
 ---
 
@@ -196,6 +222,11 @@ npm run mcp            # MCP stdio server
 | The reply arrives in one lump, not streaming | A proxy is buffering. `X-Accel-Buffering: no` is already sent; check your own proxy config. |
 | No notifications ever appear | You need a meeting within `REMINDER_LEAD_MINUTES`. Press **Check now** on the Alerts page to run the sweep immediately. |
 | `Cannot find module './env'` | Add the `.js` extension. `module: NodeNext` requires it on relative imports, even in `.ts` files. |
+| The agent describes an email but never sends it | **Working as intended.** `send_mail` requires approval; press Approve on the card. See [06-GUARDRAILS](06-GUARDRAILS.md). |
+| An MCP host cannot send mail | Also intended. MCP proposes; you confirm in CortexOne. |
+| A legitimate message is blocked | Loosen the pattern in `guardrails/policy.ts`, then add a false-positive eval case so it stays loose. |
+| Insights shows $0.00 for everything | Your model id is not in `ai/pricing.ts`, or the provider does not report token counts. |
+| `EPERM ... query_engine-windows.dll.node` on `prisma generate` | A node process is holding the engine. Stop the dev server first. |
 
 ---
 
@@ -212,3 +243,7 @@ This runs as-is on one box. Before putting it in front of other people:
 | Publish the OAuth consent screen | removes the 100-test-user cap |
 | Set `APP_URL` / `SERVER_URL` / `GOOGLE_REDIRECT_URI` to real domains | and add the new redirect URI in Google Cloud |
 | Add a payment provider | `grantCredits()` in `credits.service.ts` is the hook — call it from a verified webhook |
+| Review `guardrails/policy.ts` | Set `recipientDenyList`, tighten `maxWritesPerTurn`, and consider gating `create_meeting` too |
+| Narrow `GOOGLE_SCOPES` | If the agent never needs to send, drop `gmail.send` and use `gmail.readonly` |
+| Run `npm run eval` in CI | Exit code is 1 on failure, so it gates a merge with no API key needed |
+| Set `LLM_FALLBACK_PROVIDER` | A single provider outage otherwise takes the whole app down |

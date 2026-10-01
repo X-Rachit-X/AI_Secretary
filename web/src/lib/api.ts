@@ -2,12 +2,17 @@ import type {
   AgentCatalogEntry,
   ChatMessage,
   Conversation,
+  GatewayInfo,
   GoogleStatus,
+  GuardrailPolicy,
+  InsightsSummary,
   MailDetail,
   MailSummary,
   Meeting,
   Notification,
+  PendingApproval,
   StoredFile,
+  TraceRow,
   User,
   Wallet,
 } from "./types";
@@ -152,4 +157,31 @@ export const api = {
 
   // ── Files ───────────────────────────────────────────────────────────────
   listFiles: () => get<{ files: StoredFile[] }>("/api/files"),
+
+  // ── Approvals (human in the loop) ───────────────────────────────────────
+  listApprovals: () =>
+    get<{ approvals: PendingApproval[] }>("/api/approvals"),
+
+  /**
+   * Approving runs the stored action server-side with no model involved, so
+   * what executes is exactly what the user read. See approval.routes.ts.
+   */
+  approveAction: (id: string) =>
+    post<{ success: true; message: ChatMessage }>(
+      `/api/approvals/${id}/approve`,
+    ),
+
+  rejectAction: (id: string) =>
+    post<{ success: true }>(`/api/approvals/${id}/reject`),
+
+  // ── Observability ───────────────────────────────────────────────────────
+  insights: (days = 7) =>
+    get<{
+      summary: InsightsSummary;
+      traces: TraceRow[];
+      gateway: GatewayInfo;
+    }>(`/api/insights?days=${days}`),
+
+  guardrailPolicy: () =>
+    get<{ policy: GuardrailPolicy }>("/api/insights/policy"),
 };

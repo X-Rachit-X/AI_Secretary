@@ -6,7 +6,9 @@ import type {
   AgentId,
   ChatMessage,
   Conversation,
+  PendingApproval,
   PendingMessage,
+  Usage,
 } from "@/lib/types";
 
 /**
@@ -18,6 +20,12 @@ import type {
  * placeholder bubble; when the `completed` event arrives it is swapped for the
  * real, persisted message. The transcript therefore never contains a message
  * that does not exist on the server.
+ *
+ * `approvals` is the human-in-the-loop half. When the agent proposes an
+ * irreversible action (send an email, cancel a meeting) the server returns it
+ * here instead of doing it. Nothing happens until `approve` is called, and the
+ * server then executes the stored arguments with no model involved — so what
+ * runs is exactly what the user read.
  */
 
 type ChatState = {
@@ -27,6 +35,12 @@ type ChatState = {
   pending: PendingMessage | null;
   agent: AgentId;
   error: string | null;
+  /** Irreversible actions waiting on the user. */
+  approvals: PendingApproval[];
+  /** Token and cost accounting for the last run. */
+  lastUsage: Usage | null;
+  /** Guardrail labels that fired on the last run. */
+  lastFlags: string[];
 
   loadConversations: () => Promise<void>;
   openConversation: (id: string) => Promise<void>;
@@ -36,6 +50,9 @@ type ChatState = {
   setAgent: (agent: AgentId) => void;
   send: (prompt: string, file?: File | null) => Promise<void>;
   clearError: () => void;
+  approve: (id: string) => Promise<void>;
+  reject: (id: string) => Promise<void>;
+  loadApprovals: () => Promise<void>;
 };
 
 export const useChat = create<ChatState>((set, get) => ({
@@ -45,6 +62,9 @@ export const useChat = create<ChatState>((set, get) => ({
   pending: null,
   agent: "auto",
   error: null,
+  approvals: [],
+  lastUsage: null,
+  lastFlags: [],
 
   loadConversations: async () => {
     const { conversations } = await api.listConversations();
@@ -148,6 +168,10 @@ export const useChat = create<ChatState>((set, get) => ({
             set((state) => ({
               messages: [...state.messages, event.message],
               pending: null,
+              // Proposals from this run; the user decides next.
+              approvals: [...state.approvals, ...(event.approvals ?? [])],
+              lastUsage: event.usage ?? null,
+              lastFlags: event.flags ?? [],
             }));
 
             // Credits were spent; keep the header counter honest.
@@ -170,5 +194,39 @@ export const useChat = create<ChatState>((set, get) => ({
     // The title may have been set from the first message; refresh the sidebar.
     const { conversations } = await api.listConversations();
     set({ conversations });
+  },
+
+  loadApprovals: async () => {
+    // Proposals outlive a page refresh, so the card must come back on reload.
+    const { approvals } = await api.listApprovals();
+    set({ approvals });
+  },
+
+  approve: async (id) => {
+    try {
+      const result = await api.approveAction(id);
+
+      set((state) => ({
+        approvals: state.approvals.filter((item) => item.id !== id),
+        // The server appends a confirmation turn; show it immediately.
+        messages: result.message
+          ? [...state.messages, result.message]
+          : state.messages,
+      }));
+    } catch (error) {
+      set((state) => ({
+        // A failed approval must not leave a card that can never resolve.
+        approvals: state.approvals.filter((item) => item.id !== id),
+        error:
+          error instanceof Error ? error.message : "Could not run that action.",
+      }));
+    }
+  },
+
+  reject: async (id) => {
+    await api.rejectAction(id).catch(() => {});
+    set((state) => ({
+      approvals: state.approvals.filter((item) => item.id !== id),
+    }));
   },
 }));

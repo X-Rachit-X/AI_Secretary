@@ -5,6 +5,8 @@ import ConversationList from "@/components/chat/ConversationList";
 import MessageBubble from "@/components/chat/MessageBubble";
 import Composer from "@/components/chat/Composer";
 import ArtifactPanel from "@/components/chat/ArtifactPanel";
+import ApprovalCard from "@/components/chat/ApprovalCard";
+import UsageStrip from "@/components/chat/UsageStrip";
 import type { Artifact } from "@/lib/types";
 
 /**
@@ -31,6 +33,10 @@ export default function Chat() {
     error,
     clearError,
     loadConversations,
+    loadApprovals,
+    approvals,
+    lastUsage,
+    lastFlags,
     activeId,
     send,
   } = useChat();
@@ -40,11 +46,13 @@ export default function Chat() {
 
   useEffect(() => {
     void loadConversations();
-  }, [loadConversations]);
+    // Proposals outlive a refresh, so a pending approval must come back.
+    void loadApprovals();
+  }, [loadConversations, loadApprovals]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, pending]);
+  }, [messages, pending, approvals]);
 
   const isEmpty = messages.length === 0 && !pending;
 
@@ -100,6 +108,16 @@ export default function Chat() {
                 </span>
                 {pending.status}
               </div>
+            )}
+
+            {/* Irreversible actions the agent proposed. Nothing has run yet. */}
+            {approvals.map((approval) => (
+              <ApprovalCard key={approval.id} approval={approval} />
+            ))}
+
+            {/* What the last run cost, and which guardrails fired. */}
+            {lastUsage && !pending && (
+              <UsageStrip usage={lastUsage} flags={lastFlags} />
             )}
 
             {error && (

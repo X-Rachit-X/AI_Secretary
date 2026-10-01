@@ -23,3 +23,6 @@ Thumbs.db
 
 # TypeScript incremental build cache
 *.tsbuildinfo
+
+# Eval report output
+server/evals/

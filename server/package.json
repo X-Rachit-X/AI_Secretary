@@ -10,7 +10,9 @@
     "start": "node dist/index.js",
     "mcp": "tsx src/mcp/stdio.ts",
     "db:push": "prisma db push && prisma generate",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "eval": "tsx src/evals/run.ts",
+    "eval:live": "tsx src/evals/run.ts --live --json"
   },
   "prisma": {
     "schema": "prisma/schema.prisma"

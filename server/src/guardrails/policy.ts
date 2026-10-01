@@ -35,7 +35,7 @@ export const POLICY = {
       /disregard\s+(all\s+)?(previous|prior|your)\s+(instructions?|rules?|training)/i,
       /forget\s+(everything|all)\s+(you|above|before)/i,
       /(reveal|show|print|repeat|output)\s+(me\s+)?(your|the)\s+(system\s+)?(prompt|instructions?)/i,
-      /you\s+are\s+now\s+(a|an|in)\s+/i,
+      /you\s+are\s+now\b/i,
       /\b(developer|god|admin|root|dan)\s+mode\b/i,
       /pretend\s+(you\s+)?(are|to\s+be)\s+(not\s+)?(an?\s+)?(ai|assistant|bound)/i,
       /<\|?(im_start|im_end|system|endoftext)\|?>/i,
@@ -48,10 +48,16 @@ export const POLICY = {
      * A user pasting a stack trace that happens to contain a key should still
      * get help; what must not happen is that key travelling to an LLM provider
      * and sitting in someone's logs forever.
+     *
+     * ORDER AND SPECIFICITY MATTER HERE, and an eval case exists because this
+     * went wrong once: an Anthropic key starts "sk-ant-", which also satisfies
+     * the generic OpenAI "sk-" shape. The specific pattern is listed first AND
+     * the generic one excludes it with a lookahead, so a key is always labelled
+     * with the provider it actually belongs to.
      */
     secretPatterns: [
-      { label: "openai_key", pattern: /\bsk-[A-Za-z0-9_-]{20,}\b/g },
       { label: "anthropic_key", pattern: /\bsk-ant-[A-Za-z0-9_-]{20,}\b/g },
+      { label: "openai_key", pattern: /\bsk-(?!ant-)[A-Za-z0-9_-]{20,}\b/g },
       { label: "google_key", pattern: /\bAIza[0-9A-Za-z_-]{35}\b/g },
       { label: "aws_key", pattern: /\bAKIA[0-9A-Z]{16}\b/g },
       { label: "github_token", pattern: /\bgh[pousr]_[A-Za-z0-9]{36,}\b/g },
@@ -102,11 +108,7 @@ export const POLICY = {
      * user clicking "back". These require explicit human approval before they
      * run — see tool.guard.ts.
      */
-    requiresApproval: [
-      "send_mail",
-      "reply_to_mail",
-      "cancel_meeting",
-    ] as string[],
+    requiresApproval: ["send_mail", "reply_to_mail", "cancel_meeting"] as string[],
 
     /**
      * Per-turn caps. A model stuck in a loop should hit a wall long before it
@@ -132,7 +134,7 @@ export const POLICY = {
       "You are CortexOne Workspace",
       "You are CortexOne, a sharp and direct",
       "Working with tools:",
-      "Acting on the user's behalf:",
+      "TRUST BOUNDARY",
       "UNTRUSTED CONTENT",
     ],
 

@@ -40,6 +40,9 @@ can use the same capabilities.
 | 📑 **Document Q&A** | Upload a PDF and ask questions, answered only from the document |
 | 💻 **Code** | Build projects as artifacts with a live preview, or review existing code |
 | 🔌 **MCP** | The same calendar and mail tools in Claude Desktop or Cursor |
+| 🛡️ **Guardrails** | Four layers, including human approval before any irreversible action |
+| 🧪 **Evals** | 44 offline cases that run in under a second with no API key |
+| 📊 **Insights** | Cost, latency and guardrail activity per agent |
 
 ---
 
@@ -74,6 +77,8 @@ Calendar + Gmail in one consent) and one LLM API key. Full walkthrough in
 | State | Zustand | three small stores, no boilerplate |
 | Streaming | Server-Sent Events | one-directional, rides on plain HTTP |
 | Interop | Model Context Protocol | stdio + Streamable HTTP |
+| LLM gateway | in-process, or OpenRouter | retry, timeout, fallback, cache, cost |
+| Evals | a 300-line runner, no framework | offline suite needs no API key |
 
 **No Docker, no Redis, no MongoDB, no vector database, no S3, no cloud account**
 beyond the API keys.
@@ -84,11 +89,13 @@ beyond the API keys.
 
 ```mermaid
 graph TB
-    UI["React app<br/>Chat · Calendar · Mail · Alerts · Files"]
+    UI["React app<br/>Chat · Calendar · Mail · Alerts · Files · Insights"]
 
     subgraph API["Express — one process"]
         ROUTES["routes/"]
+        GUARD["guardrails/<br/>4 layers"]
         GRAPH["LangGraph supervisor"]
+        GW["LLM gateway"]
         SVC["services/"]
         GOOGLE["google/"]
         MCP["mcp/"]
@@ -100,12 +107,15 @@ graph TB
     GAPI["Google Calendar + Gmail"]
 
     UI -->|"fetch + SSE"| ROUTES
-    ROUTES --> GRAPH
+    ROUTES --> GUARD
+    GUARD --> GRAPH
     ROUTES --> SVC
     GRAPH --> SVC
     GRAPH --> GOOGLE
-    GRAPH --> LLM
+    GRAPH --> GW
+    GW --> LLM
     GRAPH --> FILES
+    MCP --> GUARD
     MCP --> GOOGLE
     GOOGLE --> GAPI
     SVC --> DB
@@ -117,6 +127,9 @@ A **router** node picks one of nine agents. Eight answer in one pass. The ninth,
 `workspace`, is a ReAct loop with 16 calendar, mail and notification tools, and
 it is what makes multi-step requests work.
 
+Every model call goes through one gateway (retry, timeout, fallback, cache, cost),
+and every run is bracketed by guardrails and recorded as a trace.
+
 ---
 
 ## Documentation
@@ -124,10 +137,12 @@ it is what makes multi-step requests work.
 | | |
 |---|---|
 | [01 — Architecture](docs/01-ARCHITECTURE.md) | the design and every trade-off, with diagrams |
-| [02 — File guide](docs/02-FILE-GUIDE.md) | all 66 files, what each does and why |
-| [03 — Build order](docs/03-BUILD-ORDER.md) | 12 stages, each ending in something runnable |
+| [02 — File guide](docs/02-FILE-GUIDE.md) | all 85 files, what each does and why |
+| [03 — Build order](docs/03-BUILD-ORDER.md) | 16 stages, each ending in something runnable |
 | [04 — Data flows](docs/04-DATA-FLOWS.md) | six requests traced end to end |
 | [05 — Setup](docs/05-SETUP.md) | Google Cloud, keys, MCP, troubleshooting |
+| [06 — Guardrails](docs/06-GUARDRAILS.md) | the four layers, and the attack that shapes them |
+| [07 — Evals](docs/07-EVALS.md) | the eval harness, the LLM gateway, observability |
 
 **New here?** Read [01](docs/01-ARCHITECTURE.md), then open
 [`server/src/ai/graph.ts`](server/src/ai/graph.ts) — it is 130 lines and the
@@ -141,25 +156,27 @@ whole agent system fits in your head from there.
 
 ```
 cortex-one/
-├── docs/                  five guides
+├── docs/                  seven guides
 ├── server/
-│   ├── prisma/            schema.prisma — 7 models
+│   ├── prisma/            schema.prisma — 9 models
 │   └── src/
 │       ├── lib/           errors · SSE · storage · time
 │       ├── auth/          OAuth · sessions · the gate
+│       ├── guardrails/    policy · input · output · tool gate · trust boundary
 │       ├── google/        calendar.ts · gmail.ts  (framework-free)
-│       ├── ai/            graph · router · state · models · vector store
+│       ├── ai/            graph · router · state · models · gateway · pricing
 │       │   ├── agents/    9 agents
 │       │   └── tools/     16 tools in 3 files
 │       ├── generators/    pdf · pptx
-│       ├── services/      conversations · credits · limits · alerts · cron
-│       ├── routes/        7 route files
-│       └── mcp/           tools · http · stdio
+│       ├── services/      conversations · credits · limits · alerts · cron · traces
+│       ├── routes/        9 route files
+│       ├── mcp/           tools · http · stdio
+│       └── evals/         44 offline cases + 21 live
 └── web/src/
     ├── lib/               api · sse · types
     ├── store/             auth · chat · notifications
-    ├── components/        layout · markdown · chat/
-    └── pages/             Login · Chat · Calendar · Mail · Alerts · Files
+    ├── components/        layout · markdown · chat/ (incl. ApprovalCard)
+    └── pages/             Login · Chat · Calendar · Mail · Alerts · Files · Insights
 ```
 
 ---
@@ -188,6 +205,16 @@ line, render the rest.
 **Preferences are the long-term memory.** Say *"I'm in IST, default my meetings
 to 45 minutes"* once and every future conversation knows it.
 
+**Writes need a human; reads do not.** `send_mail`, `reply_to_mail` and
+`cancel_meeting` write a proposal row instead of acting. The approve request runs
+the stored arguments with **no model involved**, so what executes is exactly what
+the user read. This is the one guardrail that cannot be talked around — and MCP
+gets it too.
+
+**Tool results from the outside world are wrapped as untrusted data.** The agent
+reads email, so anyone can put text in its context. See
+[06-GUARDRAILS](docs/06-GUARDRAILS.md).
+
 ---
 
 ## Credits
@@ -205,6 +232,22 @@ Each agent run costs from a per-user wallet (500 to start).
 Rate limits are per user, per agent, per minute — 20 for chat down to 3 for
 image. `grantCredits()` in `services/credits.service.ts` is where a payment
 provider would hook in.
+
+Actual spend, per agent, is on the **Insights** page.
+
+---
+
+## Evals
+
+```bash
+npm run eval              # 44 cases, ~40ms, no API key needed
+npm run eval -- --live    # + 21 router-accuracy cases
+```
+
+The offline suite covers every guardrail and both output parsers, so it is
+runnable in CI with no credentials — which is the usual reason eval suites get
+switched off. It found three real bugs on its first run; they are written up in
+[07-EVALS §7.5](docs/07-EVALS.md).
 
 ---
 

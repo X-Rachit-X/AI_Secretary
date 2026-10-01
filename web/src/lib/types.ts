@@ -62,10 +62,41 @@ export type PendingMessage = {
   content: string;
 };
 
+/** Token and cost accounting for one run, from the LLM gateway. */
+export type Usage = {
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  modelCalls: number;
+  cacheHits: number;
+  retries: number;
+  fallbacks: number;
+};
+
+/**
+ * An irreversible action the agent proposed but did NOT perform.
+ * The user approves or rejects it; see guardrails/tool.guard.ts on the server.
+ */
+export type PendingApproval = {
+  id: string;
+  tool: string;
+  summary: string;
+  args: Record<string, unknown>;
+  conversationId?: string;
+  expiresAt: string;
+};
+
 export type AgentStreamEvent =
   | { type: "started" }
   | { type: "progress"; message: string }
-  | { type: "completed"; message: ChatMessage; wallet: Wallet }
+  | {
+      type: "completed";
+      message: ChatMessage;
+      wallet: Wallet;
+      approvals: PendingApproval[];
+      usage: Usage;
+      flags: string[];
+    }
   | { type: "error"; title: string; message: string; status?: number };
 
 export type Meeting = {
@@ -117,4 +148,54 @@ export type AgentCatalogEntry = {
   id: AgentId;
   label: string;
   hint: string;
+};
+
+// ── Observability ───────────────────────────────────────────────────────────
+
+export type TraceRow = {
+  id: string;
+  agent: string;
+  latencyMs: number;
+  tokens: number;
+  costUsd: number;
+  modelCalls: number;
+  flags: string[];
+  ok: boolean;
+  errorTitle: string | null;
+  createdAt: string;
+};
+
+export type InsightsSummary = {
+  runs: number;
+  okRate: number;
+  totalCostUsd: number;
+  totalTokens: number;
+  p50LatencyMs: number;
+  p95LatencyMs: number;
+  byAgent: Array<{
+    agent: string;
+    runs: number;
+    avgLatencyMs: number;
+    costUsd: number;
+    errorRate: number;
+  }>;
+  topFlags: Array<{ flag: string; count: number }>;
+};
+
+export type GatewayInfo = {
+  provider: string;
+  fallbackProvider: string | null;
+  timeoutMs: number;
+  maxRetries: number;
+  cache: { entries: number; maxEntries: number };
+};
+
+/** The live guardrail policy, read from the server so the UI cannot drift. */
+export type GuardrailPolicy = {
+  maxPromptLength: number;
+  secretTypesDetected: string[];
+  blockedIntents: string[];
+  requiresApproval: string[];
+  maxWritesPerTurn: number;
+  maxRecipientsPerMessage: number;
 };

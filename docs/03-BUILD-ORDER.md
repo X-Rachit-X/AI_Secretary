@@ -220,7 +220,7 @@ npm run mcp                                # expect "[mcp] cortex-one stdio serv
 
 **Check:** wire it into Claude Desktop — config in [05-SETUP.md §5](05-SETUP.md).
 
-**The server is now complete.** 38 files.
+**The core server now runs.** 38 files; guardrails, evals and telemetry come in stages 13-15.
 
 ---
 
@@ -271,11 +271,89 @@ npm run mcp                                # expect "[mcp] cortex-one stdio serv
 
 **Check:** all five pages load with real data.
 
+
+---
+
+## Stage 13 - Guardrails (1 hr)
+
+The safety layer. Comes after the agents work, because you need something to
+guard; but before you ever point it at a real inbox.
+
+| Order | File | Note |
+|---|---|---|
+| 78 | `server/src/guardrails/policy.ts` | all thresholds and patterns in one object |
+| 79 | `server/src/guardrails/input.guard.ts` | redact secrets, block intents, flag injection |
+| 80 | `server/src/guardrails/output.guard.ts` | prompt leaks, unsafe links |
+| 81 | `server/src/guardrails/untrusted.ts` | the trust boundary |
+| 82 | `server/src/guardrails/tool.guard.ts` | the approval gate |
+| 83 | `server/src/guardrails/index.ts` | barrel |
+| 84 | add `PendingAction` to `schema.prisma`, then `npm run db:push` | |
+| 85 | `server/src/ai/tools/context.ts` | `tracked()` + `untrusted()` wrappers |
+| 86 | rewrite `calendar.tools.ts` / `mail.tools.ts` / `notify.tools.ts` to take a `ToolContext` | |
+| 87 | `server/src/routes/approval.routes.ts` | where an approved action actually runs |
+| 88 | wire the guards into `agent.routes.ts` | input before the stream, output before persistence |
+
+**Check:** ask the agent to email someone. It must describe the draft and
+*not* send. `GET /api/approvals` should list one pending row.
+
+---
+
+## Stage 14 - Evals (45 min)
+
+| Order | File |
+|---|---|
+| 89 | `server/src/evals/types.ts` |
+| 90 | `server/src/evals/guardrails.eval.ts` |
+| 91 | `server/src/evals/parsers.eval.ts` |
+| 92 | `server/src/evals/router.eval.ts` |
+| 93 | `server/src/evals/run.ts` |
+
+```bash
+npm run eval              # expect 44/44, in well under a second
+npm run eval -- --live    # router accuracy, needs a key
+```
+
+**Check:** deliberately break a pattern in `policy.ts` and confirm the suite goes
+red. An eval suite you have never seen fail is not evidence of anything.
+
+---
+
+## Stage 15 - The gateway and observability (45 min)
+
+| Order | File |
+|---|---|
+| 94 | `server/src/ai/pricing.ts` |
+| 95 | `server/src/ai/gateway.ts` |
+| 96 | add `meter`, `turnId`, `suspicious`, `flags`, `toolCalls` to `ai/state.ts` |
+| 97 | swap every agent from `getModel(...).invoke()` to `invokeModel(...)` |
+| 98 | add `Trace` to `schema.prisma`, then `npm run db:push` |
+| 99 | `server/src/services/trace.service.ts` |
+| 100 | `server/src/routes/insights.routes.ts` |
+
+**Check:** send a few messages, then `GET /api/insights`. Latency, tokens and
+cost should be non-zero, and the router should report cache hits on a repeated
+question.
+
+---
+
+## Stage 16 - The last UI pieces (30 min)
+
+| Order | File |
+|---|---|
+| 101 | `web/src/components/chat/ApprovalCard.tsx` |
+| 102 | `web/src/components/chat/UsageStrip.tsx` |
+| 103 | approvals + usage in `web/src/store/chat.store.ts` |
+| 104 | `web/src/pages/Insights.tsx` |
+| 105 | add the Insights route and nav item |
+
+**Check:** ask the agent to send an email, see the approval card with the real
+body, approve it, and watch the confirmation appear in the transcript.
+
 ---
 
 ## Total
 
-**Roughly 9–10 hours** of focused work, spread over 12 checkpoints.
+**Roughly 12–13 hours** of focused work, spread over 16 checkpoints.
 
 | Stage | Hours |
 |---|---|
@@ -284,6 +362,10 @@ npm run mcp                                # expect "[mcp] cortex-one stdio serv
 | 7 The other eight agents | 1.5 |
 | 8–9 Notifications + MCP | 1.0 |
 | 10–12 Frontend | 2.5 |
+| 13 Guardrails | 1.0 |
+| 14 Evals | 0.75 |
+| 15 Gateway + observability | 0.75 |
+| 16 Approval and Insights UI | 0.5 |
 
 ---
 
@@ -298,3 +380,7 @@ npm run mcp                                # expect "[mcp] cortex-one stdio serv
 | Notifications appear twice in dev | React StrictMode double-mount — `connect()` must be idempotent |
 | Credits go negative | the charge is not a single atomic conditional update |
 | The router always picks `chat` | the model is returning prose; check the parser takes the first *valid* word |
+| An eval fails on a regex you just edited | a scripted edit may have mangled a backslash. `grep -P '[\x00-\x08]'` over `src/` finds stray control bytes |
+| `send_mail` actually sent | the tool is calling Gmail directly instead of `proposeAction` |
+| Approving does nothing | the tool name is missing from the `EXECUTORS` table in `approval.routes.ts` |
+| Cost is always 0 | the model id is not in `ai/pricing.ts`, or the provider does not report token usage |

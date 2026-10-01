@@ -3,6 +3,7 @@ import {
   Bell,
   CalendarDays,
   FileDown,
+  LineChart,
   LogOut,
   Mail,
   MessageSquare,
@@ -25,6 +26,7 @@ const NAV = [
   { to: "/mail", label: "Mail", icon: Mail },
   { to: "/notifications", label: "Alerts", icon: Bell },
   { to: "/files", label: "Files", icon: FileDown },
+  { to: "/insights", label: "Insights", icon: LineChart },
 ];
 
 export default function Layout({ children }: { children: React.ReactNode }) {
