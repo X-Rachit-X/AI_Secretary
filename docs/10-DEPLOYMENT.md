@@ -29,27 +29,17 @@ and then pick a host from §10.7.
 
 Right now the app runs on your machine, in two processes:
 
-```
-your laptop
-├── node (tsx)  → Express API on http://localhost:4000
-└── node (vite) → the React app on http://localhost:5173
-     and a file, server/prisma/dev.db, holding all the data
-```
+| # | Local | Production | Why |
+|---|---|---|---|
+| 1 | SQLite file | **Postgres** (already wired into the Docker image) | SQLite has one writer; a restart on ephemeral disk loses it |
+| 2 | Vite on :5173 | **server serves `web/dist`** | one origin, so CORS and cookie-domain problems disappear |
+| 3 | `prisma db push` | **`prisma migrate deploy`** (runs on container boot) | `db push` can drop columns to match the schema |
+| 4 | `secure: false` cookie | **`secure: true`** via `NODE_ENV=production` | the session cookie must be HTTPS-only |
+| 5 | `localhost` redirect URI | **your real domain**, added in Google Cloud | OAuth rejects anything not listed |
+| 6 | `storage/` on disk | **a mounted volume** (or S3) | generated PDFs must survive a redeploy |
 
-Nobody else can reach it. `localhost` means *this machine*, and it stops existing
-when you close the lid.
-
-Deployment means putting the same code on **a computer that is always on and has a
-public address**, so a browser anywhere can reach it. Four problems come with that:
-
-| Problem | Why it exists | Our answer |
-|---|---|---|
-| **The other machine has none of your setup** | no Node, no npm install, no files | **Docker** — ship the whole environment as one image |
-| **The database file won't survive** | hosts replace containers on every deploy | **Postgres** as a separate always-on service |
-| **Two processes, two ports is awkward** | one public address, not two | **`SERVE_WEB=true`** — the API serves the frontend too |
-| **Browsers demand HTTPS** | cookies with `secure: true` require it | **a reverse proxy** that gets a certificate automatically |
-
-Everything below is those four answers in detail.
+Items 1–4 are already handled by the code and the Docker image; they just need
+the env vars.
 
 ```mermaid
 flowchart LR
@@ -70,6 +60,10 @@ flowchart LR
 
 ---
 
+## 10.2 Step 1 — Postgres: already done, here is how it works
+
+Prisma cannot choose a database provider from an environment variable, so the
+repo carries two schema files:
 ## 10.2 The tools we use, and what each one does
 
 ### Docker: ship the environment, not just the code
@@ -359,12 +353,21 @@ GOOGLE_REDIRECT_URI=https://your-domain.com/api/auth/google/callback
 
 ### Step 1.1 — switch Prisma to Postgres
 
-```prisma
-// server/prisma/schema.prisma
-datasource db {
-  provider = "postgresql"    // was "sqlite"
-  url      = env("DATABASE_URL")
-}
+| File | Provider | Used by |
+|---|---|---|
+| `server/prisma/schema.prisma` | `sqlite` | local development (`npm run dev`) — **edit this one** |
+| `server/prisma/postgres/schema.prisma` | `postgresql` | the Docker image — **generated**, never edited by hand |
+| `server/prisma/postgres/migrations/` | `postgresql` | applied by `prisma migrate deploy` on every container boot |
+
+The Postgres schema is produced by `server/scripts/postgres-schema.mjs`, which
+copies the SQLite schema and swaps the provider. The models cannot drift
+apart because there is only one place to write them.
+
+The image builds its Prisma client from the Postgres schema and its entrypoint
+is:
+
+```bash
+npx prisma migrate deploy --schema=prisma/postgres/schema.prisma && node dist/index.js
 ```
 
 ### Step 1.2 — stop ignoring migrations
@@ -382,9 +385,8 @@ server/prisma/migrations/
 docker run --rm -d --name cortex-pg -p 5432:5432 \
   -e POSTGRES_PASSWORD=dev -e POSTGRES_DB=cortex postgres:16-alpine
 
-cd server
 DATABASE_URL="postgresql://postgres:dev@localhost:5432/cortex" \
-  npx prisma migrate dev --name init
+  npm run db:pg:migrate -- --name add_something
 
 cd ..
 git add server/prisma/migrations
@@ -866,6 +868,8 @@ jobs:
           cache: npm
 
       - run: npm ci
+      # Fails if postgres/schema.prisma was not regenerated after a model change.
+      - run: npm run db:pg:sync -w server -- --check
       - run: npx prisma generate --schema=server/prisma/schema.prisma
       - run: npm run build
       - run: npm run eval
@@ -879,6 +883,11 @@ deliberate fail-fast that CI has to satisfy. The value signs nothing real.
 
 > 💡 This is a *real* gate because the offline evals need no API key. An eval
 > suite that requires credentials gets skipped in CI, then rots.
+
+The real workflow has a second job, `migrations`, that starts a Postgres service,
+runs `prisma migrate deploy`, and then `prisma migrate diff --exit-code` against
+the schema. A model change without a migration fails CI instead of failing the
+deploy.
 
 ---
 

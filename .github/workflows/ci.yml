@@ -26,6 +26,11 @@ jobs:
       - name: Install
         run: npm ci
 
+      # postgres/schema.prisma is generated from schema.prisma. Fail if someone
+      # edited a model and forgot `npm run db:pg:sync`.
+      - name: Postgres schema in sync
+        run: npm run db:pg:sync -w server -- --check
+
       # The Prisma client is generated code; nothing typechecks without it.
       - name: Generate Prisma client
         run: npx prisma generate --schema=server/prisma/schema.prisma
@@ -40,3 +45,50 @@ jobs:
         env:
           SESSION_SECRET: ci-only-not-a-real-secret
           DATABASE_URL: "file:./ci.db"
+
+  # Production runs `prisma migrate deploy` against Postgres on boot. This job
+  # applies the committed migrations to a real Postgres and checks they produce
+  # exactly the schema, so a missing migration fails here instead of on deploy.
+  migrations:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: cortex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://postgres:ci@localhost:5432/cortex
+      SHADOW_DATABASE_URL: postgresql://postgres:ci@localhost:5432/shadow
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Apply migrations
+        run: npx prisma migrate deploy --schema=server/prisma/postgres/schema.prisma
+
+      - name: Migrations match the schema
+        run: |
+          psql "postgresql://postgres:ci@localhost:5432/postgres" -c "CREATE DATABASE shadow"
+          npx prisma migrate diff \
+            --from-migrations server/prisma/postgres/migrations \
+            --to-schema-datamodel server/prisma/postgres/schema.prisma \
+            --shadow-database-url "$SHADOW_DATABASE_URL" \
+            --exit-code

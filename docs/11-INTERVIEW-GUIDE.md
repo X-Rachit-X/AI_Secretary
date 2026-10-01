@@ -86,8 +86,10 @@ Pick the calendar one and trace it. Nine steps:
 
 ### "Why SQLite?"
 
-> "Zero install, so anyone can clone and run it. One line in `schema.prisma`
-> switches to Postgres, and the deployment doc does exactly that.
+> "Zero install, so anyone can clone and run it. Production uses Postgres: a
+> small script generates the Postgres schema from the SQLite one, so models are
+> written once, and CI applies the committed migrations to a real Postgres to
+> prove they match.
 >
 > Its real limit is one writer, so it's wrong the moment you need two app
 > instances. For a single-process personal assistant it's correct — and the

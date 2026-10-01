@@ -245,7 +245,7 @@ This runs as-is on one box. Before putting it in front of other people:
 
 | Change | Why |
 |---|---|
-| `provider = "postgresql"` in `schema.prisma` | SQLite does not do concurrent writers well |
+| Deploy the Docker image, which uses Postgres (`prisma/postgres/`) | SQLite does not do concurrent writers well |
 | Replace the `Map` in `ratelimit.service.ts` with Redis | counters must be shared if you run more than one instance |
 | Replace `lib/storage.ts` with S3 or similar | local disk does not survive a redeploy; the interface is already narrow enough that this is one file |
 | `NODE_ENV=production` | makes the session cookie `secure`, so it only travels over HTTPS |

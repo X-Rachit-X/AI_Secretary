@@ -1,3 +1,7 @@
+// GENERATED from ../schema.prisma by scripts/postgres-schema.mjs.
+// Do not edit by hand: change ../schema.prisma, then run `npm run db:pg:sync`.
+// Production (the Docker image) builds and migrates against this file.
+
 // CortexOne data model.
 //
 // SQLite keeps local setup to zero steps. Production runs on Postgres using
@@ -10,7 +14,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 

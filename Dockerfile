@@ -22,7 +22,11 @@ COPY package.json package-lock.json ./
 COPY server/package.json ./server/
 COPY web/package.json ./web/
 
-RUN npm ci --workspaces --include-workspace-root
+# npm hoists workspace dependencies into the root node_modules and only creates
+# server/ or web/node_modules when it must nest a conflicting version. Create
+# both so the COPY lines below work either way.
+RUN npm ci --workspaces --include-workspace-root \
+    && mkdir -p server/node_modules web/node_modules
 
 # ────────────────────────────────────────────────────────────── build ────────
 FROM node:22-alpine AS build
@@ -31,11 +35,15 @@ WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/server/node_modules ./server/node_modules
+COPY --from=deps /app/web/node_modules ./web/node_modules
 COPY . .
 
 # Prisma generates a platform-specific query engine, so this must run inside
 # the image rather than being copied from a host build.
-RUN npx prisma generate --schema=server/prisma/schema.prisma
+#
+# Production uses the Postgres schema (generated from the SQLite one by
+# `npm run db:pg:sync`), so the client is built for Postgres too.
+RUN npx prisma generate --schema=server/prisma/postgres/schema.prisma
 
 RUN npm run build -w server
 RUN npm run build -w web
@@ -78,7 +86,8 @@ EXPOSE 4000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||4000)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-# `prisma migrate deploy` applies committed migrations and is safe to run on
-# every boot: already-applied migrations are skipped. Never `db push` in
-# production — it can drop columns to match the schema.
-CMD ["sh", "-c", "npx prisma migrate deploy --schema=prisma/schema.prisma && node dist/index.js"]
+# `prisma migrate deploy` applies the committed migrations in
+# prisma/postgres/migrations and is safe to run on every boot: already-applied
+# migrations are skipped. Never `db push` in production — it can drop columns
+# to match the schema.
+CMD ["sh", "-c", "npx prisma migrate deploy --schema=prisma/postgres/schema.prisma && node dist/index.js"]

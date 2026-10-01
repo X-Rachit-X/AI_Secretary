@@ -261,7 +261,7 @@ dangerous tools cannot act, only propose.
 
 | | |
 |---|---|
-| SQLite by default | fine for one process; [10-DEPLOYMENT](10-DEPLOYMENT.md) switches to Postgres in one line |
+| SQLite by default | fine for one process; the Docker image runs on Postgres with committed migrations ([10-DEPLOYMENT](10-DEPLOYMENT.md)) |
 | In-memory rate limits | correct for one instance; needs Redis for several |
 | Local file storage | survives restarts via a volume, but not multi-host without S3 |
 | No token-level streaming | progress lines stream; the answer arrives whole |
