@@ -29,17 +29,29 @@ and then pick a host from §10.7.
 
 Right now the app runs on your machine, in two processes:
 
-| # | Local | Production | Why |
-|---|---|---|---|
-| 1 | SQLite file | **Postgres** (already wired into the Docker image) | SQLite has one writer; a restart on ephemeral disk loses it |
-| 2 | Vite on :5173 | **server serves `web/dist`** | one origin, so CORS and cookie-domain problems disappear |
-| 3 | `prisma db push` | **`prisma migrate deploy`** (runs on container boot) | `db push` can drop columns to match the schema |
-| 4 | `secure: false` cookie | **`secure: true`** via `NODE_ENV=production` | the session cookie must be HTTPS-only |
-| 5 | `localhost` redirect URI | **your real domain**, added in Google Cloud | OAuth rejects anything not listed |
-| 6 | `storage/` on disk | **a mounted volume** (or S3) | generated PDFs must survive a redeploy |
+```
+your laptop
+├── node (tsx)  → Express API on http://localhost:4000
+└── node (vite) → the React app on http://localhost:5173
+     and a file, server/prisma/dev.db, holding all the data
+```
 
-Items 1–4 are already handled by the code and the Docker image; they just need
-the env vars.
+Nobody else can reach it. `localhost` means *this machine*, and it stops existing
+when you close the lid.
+
+Deployment means putting the same code on **a computer that is always on and has a
+public address**, so a browser anywhere can reach it. Four problems come with that:
+
+| Problem | Why it exists | Our answer |
+|---|---|---|
+| **The other machine has none of your setup** | no Node, no npm install, no files | **Docker** — ship the whole environment as one image |
+| **The database file won't survive** | hosts replace containers on every deploy | **Postgres** as a separate always-on service |
+| **Two processes, two ports is awkward** | one public address, not two | **`SERVE_WEB=true`** — the API serves the frontend too |
+| **Browsers demand HTTPS** | cookies with `secure: true` require it | **a reverse proxy** that gets a certificate automatically |
+
+Everything in §10.2 is those four answers in detail. The good news: **most of it is
+already wired up** — the Docker image is Postgres-ready with a committed migration,
+so `docker compose up --build` works on a fresh clone.
 
 ```mermaid
 flowchart LR
@@ -60,10 +72,6 @@ flowchart LR
 
 ---
 
-## 10.2 Step 1 — Postgres: already done, here is how it works
-
-Prisma cannot choose a database provider from an environment variable, so the
-repo carries two schema files:
 ## 10.2 The tools we use, and what each one does
 
 ### Docker: ship the environment, not just the code
@@ -129,9 +137,66 @@ SQLite is a file, and that is both its strength and the problem.
 Most hosts give containers an **ephemeral filesystem** — it is wiped when the
 container restarts. Your database would vanish on every deploy.
 
-> You *can* stay on SQLite for a single-instance deploy if the file is on a
-> persistent volume. Genuinely fine for personal use. Be ready to explain why you
-> would not do it for a team: one writer, no horizontal scaling.
+#### How Postgres is wired in: two schema files
+
+Prisma cannot pick a provider from an environment variable, so the repo carries
+two schemas:
+
+| File | Provider | Used by |
+|---|---|---|
+| `server/prisma/schema.prisma` | `sqlite` | local development — **edit this one** |
+| `server/prisma/postgres/schema.prisma` | `postgresql` | the Docker image — **generated**, never edited by hand |
+| `server/prisma/postgres/migrations/` | `postgresql` | applied by `prisma migrate deploy` on every container boot |
+
+The Postgres schema is produced from the SQLite one by
+`server/scripts/postgres-schema.mjs` (`npm run db:pg:sync`), which copies the file
+and swaps the provider. **The models cannot drift apart, because there is only one
+place to write them.**
+
+The image builds its Prisma client from the Postgres schema, and its entrypoint is:
+
+```bash
+npx prisma migrate deploy --schema=prisma/postgres/schema.prisma && node dist/index.js
+```
+
+So `docker compose up --build` works on a fresh clone with no extra steps.
+
+#### When you change a model
+
+```bash
+# 1. edit server/prisma/schema.prisma, then update your local SQLite database
+npm run db:push
+
+# 2. regenerate the Postgres schema and create a migration for it
+docker run --rm -d --name cortex-pg -p 5432:5432 \
+  -e POSTGRES_PASSWORD=dev -e POSTGRES_DB=cortex postgres:16-alpine
+
+DATABASE_URL="postgresql://postgres:dev@localhost:5432/cortex" \
+  npm run db:pg:migrate -- --name add_something
+
+git add server/prisma && git commit -m "feat(db): add something"
+docker rm -f cortex-pg
+```
+
+> ⚠️ **Migrations must be committed.** The container applies committed migration
+> files; it never generates them. CI enforces this twice: it fails if
+> `postgres/schema.prisma` is stale (`npm run db:pg:sync -- --check`), and it
+> applies the migrations to a real Postgres and fails if they do not reproduce the
+> schema exactly (`prisma migrate diff --exit-code`).
+
+#### Staying on SQLite instead
+
+Viable for a single-instance deploy *if* the file is on a persistent volume. The
+Docker image is Postgres-only, so run it directly with Node:
+
+```bash
+npm ci && npm run build
+DATABASE_URL="file:/data/cortex.db" npm run db:push    # /data is a persistent disk
+NODE_ENV=production SERVE_WEB=true DATABASE_URL="file:/data/cortex.db" npm start
+```
+
+One writer and no horizontal scaling, but genuinely fine for personal use. Be
+ready to explain why you would not do it for a team.
 
 ### Migrations: why `migrate deploy`, never `db push`
 
@@ -246,16 +311,17 @@ change the name. So:
 
 ## 10.3 The six things that must change
 
-| # | Development | Production | Set by |
-|---|---|---|---|
-| 1 | SQLite file | Postgres | `DATABASE_URL` + schema provider |
-| 2 | Vite on :5173 | API serves `web/dist` | `SERVE_WEB=true` |
-| 3 | `prisma db push` | `prisma migrate deploy` | the Dockerfile entrypoint |
-| 4 | cookie `secure: false` | cookie `secure: true` | `NODE_ENV=production` |
-| 5 | localhost redirect URI | your real domain | `GOOGLE_REDIRECT_URI` + Google Cloud |
-| 6 | `storage/` on disk | a mounted volume | compose / host config |
+| # | Development | Production | Set by | Already done? |
+|---|---|---|---|---|
+| 1 | SQLite file | Postgres | `DATABASE_URL` | ✅ image is Postgres-ready |
+| 2 | Vite on :5173 | API serves `web/dist` | `SERVE_WEB=true` | ✅ code, needs the var |
+| 3 | `prisma db push` | `prisma migrate deploy` | Dockerfile entrypoint | ✅ with a committed migration |
+| 4 | cookie `secure: false` | cookie `secure: true` | `NODE_ENV=production` | ✅ code, needs the var |
+| 5 | localhost redirect URI | your real domain | `GOOGLE_REDIRECT_URI` + Google Cloud | ❌ **you must do this** |
+| 6 | `storage/` on disk | a mounted volume | compose / host config | ✅ in `docker-compose.yml` |
 
-Items 2, 3 and 4 are already implemented — they only need the env var set.
+**So in practice there are only two jobs:** set the environment variables (§10.4)
+and register the redirect URI in Google Cloud (§10.6).
 
 ---
 
@@ -351,54 +417,20 @@ GOOGLE_REDIRECT_URI=https://your-domain.com/api/auth/google/callback
 
 ## 10.5 Step by step, part 1 — prepare the project
 
-### Step 1.1 — switch Prisma to Postgres
+### Step 1.1 — confirm the database side is ready
 
-| File | Provider | Used by |
-|---|---|---|
-| `server/prisma/schema.prisma` | `sqlite` | local development (`npm run dev`) — **edit this one** |
-| `server/prisma/postgres/schema.prisma` | `postgresql` | the Docker image — **generated**, never edited by hand |
-| `server/prisma/postgres/migrations/` | `postgresql` | applied by `prisma migrate deploy` on every container boot |
-
-The Postgres schema is produced by `server/scripts/postgres-schema.mjs`, which
-copies the SQLite schema and swaps the provider. The models cannot drift
-apart because there is only one place to write them.
-
-The image builds its Prisma client from the Postgres schema and its entrypoint
-is:
+Nothing to change: the repo already ships a generated Postgres schema and a
+committed initial migration (see [§10.2](#102-the-tools-we-use-and-what-each-one-does)).
+Just check they are in sync with the dev schema:
 
 ```bash
-npx prisma migrate deploy --schema=prisma/postgres/schema.prisma && node dist/index.js
+npm run db:pg:sync -- --check
 ```
 
-### Step 1.2 — stop ignoring migrations
+A clean exit means the Postgres schema matches `schema.prisma`. If it fails, run
+`npm run db:pg:sync` and commit the result — that is exactly what CI checks.
 
-```bash
-# .gitignore currently has this line — remove it. Migrations MUST be committed,
-# because the container applies them; it does not generate them.
-server/prisma/migrations/
-```
-
-### Step 1.3 — generate the first migration locally
-
-```bash
-# a throwaway Postgres just to generate the SQL against
-docker run --rm -d --name cortex-pg -p 5432:5432 \
-  -e POSTGRES_PASSWORD=dev -e POSTGRES_DB=cortex postgres:16-alpine
-
-DATABASE_URL="postgresql://postgres:dev@localhost:5432/cortex" \
-  npm run db:pg:migrate -- --name add_something
-
-cd ..
-git add server/prisma/migrations
-git commit -m "chore: initial Postgres migration"
-
-docker rm -f cortex-pg
-```
-
-You now have `server/prisma/migrations/<timestamp>_init/migration.sql` — the
-reviewed SQL that creates all nine tables.
-
-### Step 1.4 — generate a production session secret
+### Step 1.2 — generate a production session secret
 
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
@@ -406,15 +438,16 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 Use a **different** one from development. Anyone with it can forge a session.
 
-### Step 1.5 — confirm the build works
+### Step 1.3 — confirm the build works
 
 ```bash
+npm run db:push    # on a fresh clone the evals need the dev database to exist
 npm run build      # typecheck + compile both workspaces
 npm run eval       # 44 offline cases, no API key needed
 ```
 
-Both must pass before you deploy. If the evals fail, something is broken that a
-typecheck cannot see.
+All three must pass before you deploy. If the evals fail, something is broken that
+a typecheck cannot see.
 
 ---
 

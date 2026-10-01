@@ -33,10 +33,21 @@ if (swapped === input) {
   process.exit(1);
 }
 
-const output = HEADER + swapped;
+/**
+ * Line endings are normalised to LF on both sides.
+ *
+ * Git converts LF to CRLF on checkout on Windows, so a byte comparison against
+ * the file on disk reports "out of date" on a perfectly clean Windows clone —
+ * and the generated string itself would be a mix, because the header is written
+ * with \n while the body inherits whatever the source file has. Normalising
+ * makes both the write and the check platform-independent.
+ */
+const toLf = (text) => text.replace(/\r\n/g, "\n");
+
+const output = toLf(HEADER + swapped);
 
 if (process.argv.includes("--check")) {
-  const current = existsSync(target) ? readFileSync(target, "utf8") : "";
+  const current = existsSync(target) ? toLf(readFileSync(target, "utf8")) : "";
   if (current !== output) {
     console.error(
       "[db:pg:sync] prisma/postgres/schema.prisma is out of date.\n" +

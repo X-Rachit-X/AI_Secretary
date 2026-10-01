@@ -17,7 +17,7 @@
     "start": "npm run start -w server",
     "db:push": "npm run db:push -w server",
     "db:studio": "npm run db:studio -w server",
-    "db:pg:sync": "npm run db:pg:sync -w server",
+    "db:pg:sync": "npm run db:pg:sync -w server --",
     "db:pg:migrate": "npm run db:pg:migrate -w server --",
     "mcp": "npm run mcp -w server",
     "eval": "npm run eval -w server",

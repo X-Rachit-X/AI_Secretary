@@ -1,0 +1,29 @@
+# Line endings for files where CRLF would cause a real problem.
+#
+# Windows checkouts convert LF to CRLF by default (core.autocrlf=true). That is
+# harmless for most source, but not for these:
+#
+#  - a shell script with CRLF fails inside a Linux container with a confusing
+#    "no such file or directory", because the shebang becomes "#!/bin/sh\r"
+#  - Dockerfile RUN lines and compose files are read by Linux tooling
+#  - prisma/postgres/schema.prisma is generated and compared byte-for-byte by
+#    `npm run db:pg:sync -- --check`, so a platform-dependent representation
+#    makes CI and a local check disagree
+#
+# Everything else is left to git's defaults on purpose: forcing eol=lf repo-wide
+# would rewrite every file in the working tree for no benefit.
+
+*.sh                            text eol=lf
+Dockerfile                      text eol=lf
+docker-compose.yml              text eol=lf
+.dockerignore                   text eol=lf
+Caddyfile                       text eol=lf
+server/prisma/**/*.prisma       text eol=lf
+server/prisma/**/*.sql          text eol=lf
+server/scripts/*.mjs            text eol=lf
+
+# Binary: never touch these.
+*.png                           binary
+*.ico                           binary
+*.pdf                           binary
+*.pptx                          binary
