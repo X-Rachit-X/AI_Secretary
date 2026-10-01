@@ -1,0 +1,178 @@
+// CortexOne data model.
+//
+// SQLite keeps local setup to zero steps. To move to Postgres, change the
+// provider below to "postgresql" and point DATABASE_URL at your database —
+// nothing else in the app needs to change.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// One row per signed-in person. `googleId` is the Google account subject.
+model User {
+  id        String   @id @default(cuid())
+  googleId  String   @unique
+  email     String   @unique
+  name      String?
+  avatar    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Credit wallet. Every agent run costs credits (see services/credits.service.ts).
+  credits      Int @default(500)
+  totalCredits Int @default(500)
+
+  googleAccount GoogleAccount?
+  conversations  Conversation[]
+  notifications  Notification[]
+  files          StoredFile[]
+  preference     Preference?
+  pendingActions PendingAction[]
+  traces         Trace[]
+}
+
+/// The Google OAuth grant that lets the agent read Calendar + Gmail.
+/// Stored separately from User so revoking access never deletes the account.
+model GoogleAccount {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken  String
+  refreshToken String?
+  /// Space separated OAuth scopes actually granted.
+  scope        String
+  expiresAt    DateTime
+  updatedAt    DateTime @updatedAt
+}
+
+/// Long lived facts the agent remembers about a user across every thread
+/// (timezone, default meeting length, usual invitees...). JSON encoded.
+model Preference {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  data      String   @default("{}")
+  updatedAt DateTime @updatedAt
+}
+
+/// A chat thread in the sidebar.
+model Conversation {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String   @default("New chat")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages Message[]
+
+  @@index([userId, updatedAt])
+}
+
+/// One turn in a conversation. `images` and `artifacts` hold JSON arrays.
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String // "user" | "assistant"
+  content        String
+  /// Which agent produced an assistant message ("chat", "ppt", "workspace"...).
+  agent          String?
+  /// JSON string: string[] of image URLs.
+  images         String       @default("[]")
+  /// JSON string: Artifact[] (generated code projects, files, decks).
+  artifacts      String       @default("[]")
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+/// In-app notification. Also the record of what the reminder cron has sent.
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// "meeting" | "mail" | "agent" | "system"
+  kind      String
+  title     String
+  body      String   @default("")
+  link      String?
+  read      Boolean  @default(false)
+  /// Stable key used to avoid sending the same reminder twice
+  /// (e.g. "meeting:<googleEventId>"). Unique per user.
+  dedupeKey String?
+  createdAt DateTime @default(now())
+
+  @@unique([userId, dedupeKey])
+  @@index([userId, createdAt])
+}
+
+/// A file the app generated (PDF, PPTX, PNG) or a user uploaded.
+/// Bytes live on disk under server/storage; this row is the index.
+model StoredFile {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  mimeType  String
+  size      Int
+  /// Path on disk relative to the storage root.
+  path      String
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+/// An action the agent wants to take that policy says a human must approve
+/// first (sending mail, cancelling a meeting). Created by the tool guard,
+/// resolved from the UI. See guardrails/tool.guard.ts.
+model PendingAction {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversationId String
+  /// Tool name, e.g. "send_mail".
+  tool           String
+  /// JSON encoded arguments the agent proposed.
+  args           String
+  /// One line the UI shows: "Send 'Re: launch' to sam@acme.com".
+  summary        String
+  /// "pending" | "approved" | "rejected" | "expired"
+  status         String   @default("pending")
+  createdAt      DateTime @default(now())
+  expiresAt      DateTime
+
+  @@index([userId, status])
+  @@index([conversationId, createdAt])
+}
+
+/// One row per agent run: what it cost, how long it took, what the guardrails
+/// said. Powers the Insights page and the eval reports.
+model Trace {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversationId String?
+  agent          String
+  /// Milliseconds from graph.invoke() to the final state.
+  latencyMs      Int
+  inputTokens    Int      @default(0)
+  outputTokens   Int      @default(0)
+  /// Estimated, in USD. Provider pricing lives in ai/pricing.ts.
+  costUsd        Float    @default(0)
+  modelCalls     Int      @default(0)
+  toolCalls      Int      @default(0)
+  /// JSON array of guardrail verdict labels that fired this run.
+  flags          String   @default("[]")
+  ok             Boolean  @default(true)
+  errorTitle     String?
+  createdAt      DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([agent, createdAt])
+}

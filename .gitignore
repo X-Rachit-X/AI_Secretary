@@ -1,0 +1,25 @@
+node_modules/
+dist/
+build/
+.env
+.env.local
+*.log
+
+# Prisma / SQLite database
+server/prisma/dev.db
+server/prisma/dev.db-journal
+server/prisma/migrations/
+
+# Generated artifacts (PDF / PPTX / images) and uploads
+server/storage/
+server/tmp/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+__MACOSX/
+Thumbs.db
+
+# TypeScript incremental build cache
+*.tsbuildinfo
