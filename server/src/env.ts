@@ -94,6 +94,25 @@ export const env = {
 
   reminderCron: optional("REMINDER_CRON", "*/5 * * * *"),
   reminderLeadMinutes: Number(optional("REMINDER_LEAD_MINUTES", "15")),
+
+  /**
+   * Serve the built frontend from this process.
+   *
+   * Off in development, where Vite serves it on its own port. On in production
+   * it makes a single-container deploy possible and removes the CORS and
+   * cookie-domain problem entirely, because the browser talks to one origin.
+   */
+  serveWeb: optional("SERVE_WEB", "false") === "true",
+  webDistPath: optional("WEB_DIST_PATH", "../web/dist"),
+
+  /**
+   * Comma-separated extra origins allowed through CORS.
+   * Needed only when the API and the UI are on different hosts.
+   */
+  extraCorsOrigins: optional("EXTRA_CORS_ORIGINS")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean),
 } as const;
 
 /** True when Google sign-in / Calendar / Gmail can actually be used. */

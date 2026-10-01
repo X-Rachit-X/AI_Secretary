@@ -1,0 +1,20 @@
+# Anything not needed to build. Keeping this tight makes the build context
+# small and stops local secrets from ever entering an image layer.
+node_modules
+**/node_modules
+server/dist
+web/dist
+server/storage
+server/tmp
+server/evals
+**/.env
+**/.env.local
+*.log
+.git
+.github
+.vscode
+.idea
+docs
+_legacy
+**/*.tsbuildinfo
+server/prisma/dev.db*

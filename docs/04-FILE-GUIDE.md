@@ -1,17 +1,21 @@
-# 2. File guide
+# 4. File guide
 
 Every file, what it does, and what it depends on. Use this as a map while you write.
 
-**Total: 85 source files** — 52 server, 26 web, 7 docs.
+**Total: 90 source files** — 66 server, 24 web — plus 11 documents.
 
 ---
 
-## 2.1 Folder shape
+## 4.1 Folder shape
 
 ```
 cortex-one/
 ├── package.json              npm workspaces + the dev script
 ├── .env.example              every key, commented
+├── Dockerfile                3-stage build: deps → build → runtime
+├── docker-compose.yml        production-like stack: app + Postgres
+├── .dockerignore             keeps secrets and junk out of image layers
+├── .github/workflows/ci.yml  typecheck, build, run the offline evals
 │
 ├── server/                   Node + Express + TypeScript
 │   ├── prisma/schema.prisma  the data model
@@ -44,7 +48,7 @@ cortex-one/
 
 ---
 
-## 2.2 Server — foundation
+## 4.2 Server — foundation
 
 | File | What it does | Why it exists |
 |---|---|---|
@@ -105,7 +109,7 @@ this way; this is what each file does.
 
 ---
 
-## 2.3 Server — the AI layer
+## 4.3 Server — the AI layer
 
 | File | What it does | The detail worth knowing |
 |---|---|---|
@@ -113,7 +117,7 @@ this way; this is what each file does.
 | **`ai/pricing.ts`** | USD per million tokens, per model | Cost is computed in one place from provider-reported counts. An unlisted model costs 0, which shows up as a suspiciously free agent on Insights. |
 | **`ai/models.ts`** | `getModel(role)`, `getFallbackModel(role)`, `getEmbeddings()` | Agents ask by **role** (`"router"`, `"vision"`), never by provider. Temperature is 0 where output is parsed by code, warmer where it is prose for a human. Models are cached per role. |
 | **`ai/state.ts`** | The `GraphState` annotation | Read this first when you want to understand the graph. Every node reads it and returns a partial update. |
-| **`ai/router.node.ts`** | Picks one agent | Three stages, cheapest first — see [01-ARCHITECTURE §1.4](01-ARCHITECTURE.md#how-the-router-decides--three-stages-cheapest-first). Parses the first valid word from the reply, because models answer `"Search."` and `"agent: coding"` often enough that a bare match is unsafe. |
+| **`ai/router.node.ts`** | Picks one agent | Three stages, cheapest first — see [03-ARCHITECTURE §3.4](03-ARCHITECTURE.md#how-the-router-decides--three-stages-cheapest-first). Parses the first valid word from the reply, because models answer `"Search."` and `"agent: coding"` often enough that a bare match is unsafe. |
 | **`ai/graph.ts`** | Wires nodes and edges, compiles once | Compilation validates the wiring, so a typo in a destination fails at boot rather than mid-conversation. Also exports `AGENT_CATALOG`, which the UI picker reads — the list can never drift from the graph. |
 | **`ai/tools/context.ts`** | `ToolContext`, `tracked()`, `untrusted()` | Tools are built per run so they close over *this* turn's identity. `tracked()` returns tool errors as strings rather than throwing, so one failed call does not abort the ReAct loop. |
 | **`ai/vector-store.ts`** | ~100-line cosine-similarity vector store | LangChain v1 dropped `MemoryVectorStore`, and running Qdrant for one throwaway document is operations work for nothing. This is also the clearest possible explanation of what retrieval actually is. |
@@ -150,7 +154,7 @@ this way; this is what each file does.
 
 ---
 
-## 2.4 Server — services and routes
+## 4.4 Server — services and routes
 
 ### `services/`
 
@@ -202,7 +206,7 @@ runs after they agreed to it.
 
 ---
 
-## 2.5 Web
+## 4.5 Web
 
 | File | What it does | The detail worth knowing |
 |---|---|---|
@@ -231,7 +235,24 @@ runs after they agreed to it.
 
 ---
 
-## 2.6 Dependency direction
+## 4.6 Deployment files
+
+| File | What it does | The detail worth knowing |
+|---|---|---|
+| **`Dockerfile`** | Three stages: `deps` installs everything, `build` compiles, `runtime` starts clean and copies only what runs | The final image has no TypeScript compiler, no Vite and no source. `prisma generate` must run *inside* the image because the query engine is platform-specific. |
+| **`docker-compose.yml`** | App + Postgres, with a healthcheck so the app does not migrate before the database accepts connections | A named volume for `storage/`, or every redeploy loses the files users generated. |
+| **`.dockerignore`** | Excludes `node_modules`, `dist`, `.env`, `_legacy` | Keeps the build context small and stops local secrets entering an image layer. |
+| **`.github/workflows/ci.yml`** | Typecheck, build, then `npm run eval` | The offline evals need no API key, which is the only reason this is a real gate rather than a job people learn to ignore. |
+
+The entrypoint is `prisma migrate deploy && node dist/index.js`. Already-applied
+migrations are skipped, so it is safe on every boot. **Never `db push` in
+production** — it can drop columns to match the schema.
+
+See [10-DEPLOYMENT](10-DEPLOYMENT.md) for the full procedure.
+
+---
+
+## 4.7 Dependency direction
 
 Nothing below ever imports from above. If you find yourself wanting to, something is in the wrong layer.
 
@@ -265,3 +286,9 @@ graph TD
 
 `evals/` sits outside the runtime graph: it imports the guardrails and the router
 to measure them, and nothing imports it back.
+
+<!-- nav -->
+
+---
+
+[← Architecture](03-ARCHITECTURE.md) · [Index](README.md) · [Data flows →](05-DATA-FLOWS.md)

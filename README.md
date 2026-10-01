@@ -50,7 +50,7 @@ can use the same capabilities.
 
 ```bash
 npm install
-cp .env.example server/.env        # then fill it in — see docs/05-SETUP.md
+cp .env.example server/.env        # then fill it in — see docs/08-SETUP.md
 cp web/.env.example web/.env
 npm run db:push
 npm run dev
@@ -60,7 +60,17 @@ Open <http://localhost:5173>.
 
 You need **two things** in `server/.env`: a Google OAuth client (sign-in +
 Calendar + Gmail in one consent) and one LLM API key. Full walkthrough in
-[docs/05-SETUP.md](docs/05-SETUP.md).
+[docs/08-SETUP.md](docs/08-SETUP.md).
+
+```bash
+npm run eval       # 44 offline cases, ~40ms, no API key needed
+npm run build      # typecheck + build both workspaces
+npm run mcp        # MCP stdio server for Claude Desktop / Cursor
+```
+
+**Deploy:** `docker compose up --build` runs the production stack (app + Postgres)
+on <http://localhost:4000>. Four hosting options in
+[docs/10-DEPLOYMENT.md](docs/10-DEPLOYMENT.md).
 
 ---
 
@@ -134,21 +144,30 @@ and every run is bracketed by guardrails and recorded as a trace.
 
 ## Documentation
 
-| | |
-|---|---|
-| [01 — Architecture](docs/01-ARCHITECTURE.md) | the design and every trade-off, with diagrams |
-| [02 — File guide](docs/02-FILE-GUIDE.md) | all 85 files, what each does and why |
-| [03 — Build order](docs/03-BUILD-ORDER.md) | 16 stages, each ending in something runnable |
-| [04 — Data flows](docs/04-DATA-FLOWS.md) | six requests traced end to end |
-| [05 — Setup](docs/05-SETUP.md) | Google Cloud, keys, MCP, troubleshooting |
-| [06 — Guardrails](docs/06-GUARDRAILS.md) | the four layers, and the attack that shapes them |
-| [07 — Evals](docs/07-EVALS.md) | the eval harness, the LLM gateway, observability |
+Eleven documents in reading order. Each links to the next — start at the top and
+keep going. Full index: [docs/README.md](docs/README.md).
 
-**New here?** Read [01](docs/01-ARCHITECTURE.md), then open
-[`server/src/ai/graph.ts`](server/src/ai/graph.ts) — it is 130 lines and the
-whole agent system fits in your head from there.
+| # | Document | What you get |
+|---|---|---|
+| 01 | [Overview](docs/01-OVERVIEW.md) | what this is, a 10-minute tour of the whole system |
+| 02 | [Concepts](docs/02-CONCEPTS.md) | **every concept taught with the real code** — tools, LangGraph, ReAct, RAG, MCP, SSE, OAuth, injection |
+| 03 | [Architecture](docs/03-ARCHITECTURE.md) | the design and every trade-off, with diagrams |
+| 04 | [File guide](docs/04-FILE-GUIDE.md) | all 90 files: what each does and the one detail worth knowing |
+| 05 | [Data flows](docs/05-DATA-FLOWS.md) | eight requests traced end to end |
+| 06 | [Guardrails](docs/06-GUARDRAILS.md) | the four safety layers, and the attack that shapes them |
+| 07 | [Evals and gateway](docs/07-EVALS.md) | how correctness is measured; retry, fallback, cost |
+| 08 | [Setup](docs/08-SETUP.md) | Google Cloud, keys, MCP config, troubleshooting |
+| 09 | [Build order](docs/09-BUILD-ORDER.md) | type it out yourself, 16 checkpoints |
+| 10 | [Deployment](docs/10-DEPLOYMENT.md) | Docker, Postgres, four hosting options, HTTPS, CI |
+| 11 | [Interview guide](docs/11-INTERVIEW-GUIDE.md) | the questions you will be asked, and how to answer them |
 
-**Typing it out yourself?** Follow [03](docs/03-BUILD-ORDER.md) top to bottom.
+**Shortest useful path:** [01 Overview](docs/01-OVERVIEW.md) →
+[02 Concepts](docs/02-CONCEPTS.md) → open
+[`server/src/ai/graph.ts`](server/src/ai/graph.ts). It is 130 lines, and the whole
+agent system fits in your head from there.
+
+**Want it running?** [08 Setup](docs/08-SETUP.md). **Want it deployed?**
+[10 Deployment](docs/10-DEPLOYMENT.md).
 
 ---
 
@@ -156,7 +175,7 @@ whole agent system fits in your head from there.
 
 ```
 cortex-one/
-├── docs/                  seven guides
+├── docs/                  eleven guides
 ├── server/
 │   ├── prisma/            schema.prisma — 9 models
 │   └── src/
@@ -261,4 +280,4 @@ Two earlier projects merged into one:
 Plus Gmail and notifications, which neither had. Along the way the two auth
 vendors, five microservices, Redis, MongoDB, Qdrant and S3 became one process,
 one database and one folder. See
-[01-ARCHITECTURE §1.3](docs/01-ARCHITECTURE.md#13-what-was-removed-and-what-replaced-it).
+[03-ARCHITECTURE §3.3](docs/03-ARCHITECTURE.md).

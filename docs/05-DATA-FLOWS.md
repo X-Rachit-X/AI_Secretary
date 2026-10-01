@@ -1,11 +1,11 @@
-# 4. Data flows
+# 5. Data flows
 
 Six real requests, traced end to end. If you want to understand how a piece of
 the system works, find the flow that uses it and follow the arrows.
 
 ---
 
-## 4.1 Signing in
+## 5.1 Signing in
 
 One consent screen does three jobs: identify the user, grant Calendar, grant Gmail.
 
@@ -49,7 +49,7 @@ silently stops working an hour later.
 
 ---
 
-## 4.2 "What's on my calendar tomorrow?"
+## 5.2 "What's on my calendar tomorrow?"
 
 The full path through the graph, including billing and streaming.
 
@@ -113,7 +113,7 @@ charged.
 
 ---
 
-## 4.3 "What's the latest on X?" — the search hand-off
+## 5.3 "What's the latest on X?" — the search hand-off
 
 The only two-node path in the graph.
 
@@ -153,7 +153,7 @@ to cite by number, and those numbers have to line up with what it was shown.
 
 ---
 
-## 4.4 "Make a deck about X"
+## 5.4 "Make a deck about X"
 
 The model writes a structure; code renders it.
 
@@ -205,7 +205,7 @@ The PDF agent is the same shape with `SECTION:` / `P:` / `B:` tags.
 
 ---
 
-## 4.5 Chat with an uploaded PDF — RAG in full
+## 5.5 Chat with an uploaded PDF — RAG in full
 
 ```mermaid
 flowchart TD
@@ -253,7 +253,7 @@ a vector database and its approximate index.
 
 ---
 
-## 4.6 A meeting reminder appears without a refresh
+## 5.6 A meeting reminder appears without a refresh
 
 ```mermaid
 sequenceDiagram
@@ -301,7 +301,182 @@ exceeding max listeners.
 
 ---
 
-## 4.7 The same tool, three ways in
+## 5.7 "Reply to Sam and say Friday works" — the approval round trip
+
+The flow that makes the guardrails real. Two HTTP requests, and **no model in the
+second one**.
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant R as /api/agent/chat
+    participant W as workspace agent
+    participant TG as tool.guard
+    participant DB as PendingAction
+    participant AR as /api/approvals/:id/approve
+    participant G as Gmail
+
+    rect rgb(30,58,138)
+    Note over B,G: Request 1 — the agent proposes
+    end
+    B->>R: "reply to Sam and say Friday works"
+    R->>W: graph run
+    W->>G: search_mail("from:sam")
+    G-->>W: message id 18f2a9c
+    W->>TG: reply_to_mail({messageId, body})
+    TG->>TG: validate, spend 1 of 3 writes
+    TG->>DB: INSERT status="pending"
+    TG-->>W: {status:"approval_required", actionId, guidance}
+    Note over W: guidance says STOP calling tools<br/>and describe the action in full
+    W-->>R: "I'll send this reply: ..."
+    R->>DB: pendingForTurn(since turnBegan)
+    R-->>B: completed + approvals[] + flags
+
+    rect rgb(22,101,52)
+    Note over B,G: Request 2 — the human decides
+    end
+    B->>B: ApprovalCard renders the STORED args
+    B->>AR: POST approve
+    AR->>DB: conditional UPDATE pending → approved
+    Note over AR,DB: count===0 on a double-click
+    AR->>G: replyToMail(stored args)
+    G-->>AR: sent
+    AR->>B: confirmation turn appended
+```
+
+### Why this is two requests and not one
+
+A single request would mean pausing the graph mid-run and resuming it later —
+which needs a checkpointer, a resumable state store, and a way to reattach an SSE
+stream. All solvable, all complexity.
+
+Two requests needs a table row. The proposal is durable, so it survives a refresh
+(`loadApprovals()` on mount brings the card back), and the approve path is a plain
+POST with no streaming.
+
+### The three details that matter
+
+**1. The tool's return value is a prompt.**
+
+```ts
+return JSON.stringify({
+  status: "approval_required",
+  actionId: action.id,
+  summary,
+  guidance: [
+    "This action has NOT happened yet and will not happen until the user",
+    "approves it in the interface. Do not call this tool again.",
+    "Write a short reply that states exactly what you are about to do",
+    "(recipients, subject, and the full body if it is an email) so the user",
+    "can check it before approving.",
+  ].join(" "),
+});
+```
+
+Tool results are an input channel. Telling the model *what happened* (nothing),
+*what to do next* (describe it fully) and *what not to do* (retry) is what stops
+it either claiming success or calling the tool again.
+
+**2. The card shows stored arguments, not the agent's summary.**
+
+```tsx
+// web/src/components/chat/ApprovalCard.tsx
+<Field label="To" value={(args.to as string[])?.join(", ")} />
+<Field label="Subject" value={String(args.subject ?? "")} />
+<dd className="whitespace-pre-wrap ...">{String(args.body ?? "")}</dd>
+```
+
+The summary is exactly what an injected instruction would have tampered with. The
+user authorises the payload, not the description of it.
+
+**3. The claim is atomic.**
+
+```ts
+const claimed = await prisma.pendingAction.updateMany({
+  where: { id: actionId, status: "pending" },
+  data:  { status: "approved" },
+});
+
+if (claimed.count === 0) return { ok: false, reason: "already_resolved" };
+```
+
+A double-click finds nothing still pending, so the email cannot go twice.
+
+**Files:** `ai/tools/mail.tools.ts` → `guardrails/tool.guard.ts` →
+`routes/approval.routes.ts` → `web/src/components/chat/ApprovalCard.tsx`
+
+---
+
+## 5.8 One turn, with every guardrail and the telemetry
+
+The same request as §5.2, but showing what wraps it. This is the shape of *every*
+agent turn.
+
+```mermaid
+flowchart TD
+    A["POST /api/agent/chat"] --> B["guardInput(prompt)"]
+    B -->|"ok:false"| X["422 + Trace(agent:'blocked')<br/>stream never opens"]
+    B -->|"ok:true, maybe redacted"| C["recentHistory()<br/>BEFORE saving this turn"]
+    C --> D["saveMessage(user)"]
+    D --> E["openSseStream()"]
+    E --> F["openTurn(turnId)<br/>write budget = 0"]
+    F --> G["graph.invoke({meter, turnId, suspicious})"]
+
+    G --> H["router → agent"]
+    H --> I["invokeModel() via the gateway<br/>cache · timeout · retry · fallback"]
+    I --> J["UsageMeter accumulates<br/>tokens + cost"]
+    H --> K["tools: tracked() counts,<br/>untrusted() wraps"]
+
+    G --> L["guardOutput(response)"]
+    L --> M["saveMessage(assistant)<br/>guarded text, not raw"]
+    M --> N["pendingForTurn()"]
+    N --> O["SSE completed<br/>message + wallet + approvals + usage + flags"]
+    O --> P["recordTrace()"]
+    P --> Q["finally: delete upload,<br/>closeTurn(turnId)"]
+
+    style B fill:#1e3a8a,color:#fff
+    style L fill:#1e3a8a,color:#fff
+    style P fill:#166534,color:#fff
+```
+
+### Ordering decisions, each for a reason
+
+| Step | Why there |
+|---|---|
+| input guard **before** the stream opens | a rejection can be a plain 422; once headers are sent you cannot set a status |
+| history **before** saving the turn | otherwise the prompt is in the history *and* the current turn, and the model answers as if asked twice |
+| `openTurn` **before** `graph.invoke` | the write budget must exist before any tool can spend from it |
+| output guard **before** `saveMessage` | a leaked secret in the database is still leaked |
+| `recordTrace` in both branches | a failed run is the most interesting kind to have data about |
+| `closeTurn` in `finally` | the budget must not outlive the turn, whatever happened |
+
+### What the browser gets back
+
+```json
+{
+  "type": "completed",
+  "message": { "id": "...", "role": "assistant", "content": "...", "agent": "workspace" },
+  "wallet": { "credits": 487, "totalCredits": 500 },
+  "approvals": [],
+  "usage": { "inputTokens": 2104, "outputTokens": 186, "costUsd": 0.0011,
+             "modelCalls": 3, "cacheHits": 0, "retries": 0, "fallbacks": 0 },
+  "flags": []
+}
+```
+
+`usage` and `flags` render as the strip under the answer
+([`UsageStrip.tsx`](../web/src/components/chat/UsageStrip.tsx)), and the same
+numbers go to the `Trace` row that the Insights page aggregates.
+
+> 💡 Putting cost in the product, not only a dashboard, is how you notice that a
+> prompt change doubled it — on the same screen where you would notice the answer
+> got worse.
+
+**Files:** `routes/agent.routes.ts` is the whole flow in one file, ~240 lines.
+
+---
+
+## 5.9 The same tool, three ways in
 
 ```mermaid
 flowchart LR
@@ -330,7 +505,7 @@ functions is what lets all three share one implementation.
 
 ---
 
-## 4.8 Where a request can fail, and what the user sees
+## 5.10 Where a request can fail, and what the user sees
 
 ```mermaid
 flowchart TD
@@ -355,3 +530,9 @@ provider error string must never reach a chat bubble.
 Once the SSE stream is open the headers are already sent, so errors travel as
 `data: {"type":"error", ...}` events rather than HTTP status codes. The chat
 store turns those into the red banner above the composer.
+
+<!-- nav -->
+
+---
+
+[← File guide](04-FILE-GUIDE.md) · [Index](README.md) · [Guardrails →](06-GUARDRAILS.md)

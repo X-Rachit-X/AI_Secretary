@@ -1,0 +1,42 @@
+name: CI
+
+# Typecheck, build and run the offline eval suite on every push.
+#
+# The evals are the point of this workflow. 44 cases cover every guardrail and
+# both output parsers, and because they need no API key they are a real gate
+# rather than a job everyone learns to ignore.
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # The Prisma client is generated code; nothing typechecks without it.
+      - name: Generate Prisma client
+        run: npx prisma generate --schema=server/prisma/schema.prisma
+
+      - name: Typecheck and build both workspaces
+        run: npm run build
+
+      # env.ts validates SESSION_SECRET at import time — a deliberate fail-fast
+      # that CI has to satisfy. The value is never used to sign anything real.
+      - name: Offline evals
+        run: npm run eval
+        env:
+          SESSION_SECRET: ci-only-not-a-real-secret
+          DATABASE_URL: "file:./ci.db"

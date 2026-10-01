@@ -1,10 +1,10 @@
-# 1. Architecture
+# 3. Architecture
 
 How CortexOne is put together, and why each decision was made.
 
 ---
 
-## 1.1 What this project is
+## 3.1 What this project is
 
 Two earlier projects, merged:
 
@@ -15,7 +15,7 @@ Two earlier projects, merged:
 
 Plus what neither had: **Gmail** and **notifications**.
 
-## 1.2 The shape of it
+## 3.2 The shape of it
 
 ```mermaid
 graph TB
@@ -63,7 +63,7 @@ graph TB
 
 **One process.** The original cortex-ai ran five services behind a gateway (auth, chat, billing, agent, gateway) with Redis, MongoDB, Qdrant and S3 behind them. That is a sensible shape for a team deploying independently; it is a bad shape for one person trying to understand a system. Everything here is one Express app, one database and one folder of files.
 
-## 1.3 What was removed, and what replaced it
+## 3.3 What was removed, and what replaced it
 
 | Original | Replaced by | Why |
 |---|---|---|
@@ -81,7 +81,7 @@ graph TB
 | Mastra agent framework | LangGraph `createReactAgent` | One agent framework instead of two. |
 | Next.js frontend | Vite + React | No SSR needed for an authenticated single-page app; Vite starts in under a second. |
 
-## 1.4 The agent graph
+## 3.4 The agent graph
 
 This is the core. One router decides; one agent runs.
 
@@ -165,7 +165,7 @@ The chat agent words its answer differently in each case.
 
 See [`server/src/ai/state.ts`](../server/src/ai/state.ts).
 
-## 1.5 Two kinds of agent
+## 3.5 Two kinds of agent
 
 Most agents are **one-shot**: call the model once, format the result, done.
 
@@ -205,7 +205,7 @@ The loop ends when the model returns a message with **no tool calls**. That mess
 
 See [`server/src/ai/agents/workspace.agent.ts`](../server/src/ai/agents/workspace.agent.ts).
 
-## 1.6 The toolbelt
+## 3.6 The toolbelt
 
 Calendar, Mail and Notification tools are bound together into **one** agent rather than split across three. Real requests cross all three:
 
@@ -253,7 +253,7 @@ graph TB
 
 **`userId` is closed over, never a tool argument.** A model must never be in a position to name whose calendar to read.
 
-## 1.7 Three front doors, one implementation
+## 3.7 Three front doors, one implementation
 
 `google/calendar.ts` and `google/gmail.ts` are plain functions with no framework types. That is what lets three different callers share them:
 
@@ -274,7 +274,7 @@ graph LR
 
 Browsing your inbox should be instant and free. Asking "move my 3pm and tell everyone" is worth a model call. Both paths hit the same code.
 
-## 1.8 Memory: three layers
+## 3.8 Memory: three layers
 
 ```mermaid
 graph TB
@@ -295,7 +295,7 @@ Layer 3 is what makes the assistant feel like it knows you. When the user says *
 
 Preferences are injected as **text**, not fetched by a tool: they are small, needed almost every run, and a tool call would be a wasted round trip every time.
 
-## 1.9 Billing and limits
+## 3.9 Billing and limits
 
 The rule that matters: **charge before the work, refund if it throws.**
 
@@ -325,7 +325,7 @@ prisma.user.updateMany({
 
 See [`server/src/services/credits.service.ts`](../server/src/services/credits.service.ts).
 
-## 1.10 Streaming
+## 3.10 Streaming
 
 Both long-lived endpoints use **Server-Sent Events**, not WebSockets. Traffic is one-directional and rides on a plain HTTP response, so there is no second server to run.
 
@@ -352,7 +352,7 @@ The browser's built-in `EventSource` can only do GET with no body, which rules i
 
 **The one thing to get right:** a network chunk does not line up with an event boundary. Anything after the last blank line is kept in a buffer and completed by the next chunk.
 
-## 1.11 Notifications
+## 3.11 Notifications
 
 ```mermaid
 sequenceDiagram
@@ -375,7 +375,7 @@ sequenceDiagram
 
 `dedupeKey` is what makes it safe to run the sweep every five minutes. `meeting:<eventId>` is written once; later ticks that see the same meeting are no-ops.
 
-## 1.12 Security
+## 3.12 Security
 
 | Concern | How it is handled |
 |---|---|
@@ -388,7 +388,7 @@ sequenceDiagram
 | Upload abuse | 20 MB cap, PDF and images only, deleted in a `finally` block |
 | Quota abuse | per-user per-agent rate limit, then the credit wallet |
 
-## 1.13 Guardrails: four layers, one of them hard
+## 3.13 Guardrails: four layers, one of them hard
 
 The agent reads the user's email, which means **anyone on the internet can put
 text into its context**. That single fact shapes the safety design.
@@ -411,7 +411,7 @@ MCP gets the same gate — otherwise it would be a hole straight through the pol
 
 Full detail in [06-GUARDRAILS.md](06-GUARDRAILS.md).
 
-## 1.14 The LLM gateway
+## 3.14 The LLM gateway
 
 Every model call goes through `invokeModel()` in
 [`ai/gateway.ts`](../server/src/ai/gateway.ts) rather than `model.invoke()`:
@@ -427,7 +427,7 @@ Every model call goes through `invokeModel()` in
 `LLM_PROVIDER=openrouter` uses a hosted gateway instead; the in-process one still
 applies on top.
 
-## 1.15 Observability
+## 3.15 Observability
 
 One `Trace` row per run — agent, latency, tokens, cost, guardrail flags — and an
 **Insights** page that answers three questions an agent app cannot answer by
@@ -436,11 +436,17 @@ actually firing.
 
 A guardrail nobody can see is a guardrail nobody will maintain.
 
-## 1.16 Where to go next
+## 3.16 Where to go next
 
-- [02-FILE-GUIDE.md](02-FILE-GUIDE.md) — what every file does
-- [03-BUILD-ORDER.md](03-BUILD-ORDER.md) — the order to write them in
-- [04-DATA-FLOWS.md](04-DATA-FLOWS.md) — six requests traced end to end
-- [05-SETUP.md](05-SETUP.md) — keys, OAuth and running it
+- [04-FILE-GUIDE.md](04-FILE-GUIDE.md) — what every file does
+- [09-BUILD-ORDER.md](09-BUILD-ORDER.md) — the order to write them in
+- [05-DATA-FLOWS.md](05-DATA-FLOWS.md) — eight requests traced end to end
+- [08-SETUP.md](08-SETUP.md) — keys, OAuth and running it
 - [06-GUARDRAILS.md](06-GUARDRAILS.md) — the four layers, and the attack that shapes them
 - [07-EVALS.md](07-EVALS.md) — the eval harness, the gateway and observability
+
+<!-- nav -->
+
+---
+
+[← Concepts](02-CONCEPTS.md) · [Index](README.md) · [File guide →](04-FILE-GUIDE.md)

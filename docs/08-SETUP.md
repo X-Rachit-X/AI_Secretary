@@ -1,4 +1,4 @@
-# 5. Setup
+# 8. Setup
 
 From a clean machine to a running app.
 
@@ -107,7 +107,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 # 4. create the database
 npm run db:push
 
-# 5. start both
+# 8. start both
 npm run dev
 ```
 
@@ -247,3 +247,9 @@ This runs as-is on one box. Before putting it in front of other people:
 | Narrow `GOOGLE_SCOPES` | If the agent never needs to send, drop `gmail.send` and use `gmail.readonly` |
 | Run `npm run eval` in CI | Exit code is 1 on failure, so it gates a merge with no API key needed |
 | Set `LLM_FALLBACK_PROVIDER` | A single provider outage otherwise takes the whole app down |
+
+<!-- nav -->
+
+---
+
+[← Evals and gateway](07-EVALS.md) · [Index](README.md) · [Build order →](09-BUILD-ORDER.md)

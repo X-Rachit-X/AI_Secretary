@@ -1,4 +1,4 @@
-# 3. Build order
+# 9. Build order
 
 The order to write the files in if you are typing this project out yourself.
 
@@ -61,7 +61,7 @@ This is the gate everything else sits behind, so it comes before any feature.
 | 11 | `server/src/auth/require-auth.ts` |
 | 12 | `server/src/routes/auth.routes.ts` |
 
-Set up Google OAuth credentials first — see [05-SETUP.md §2](05-SETUP.md).
+Set up Google OAuth credentials first — see [08-SETUP.md §2](08-SETUP.md).
 
 ```bash
 # open in a browser, complete consent
@@ -218,7 +218,7 @@ curl -X GET http://localhost:4000/mcp     # expect 405 with an Allow header
 npm run mcp                                # expect "[mcp] cortex-one stdio server ready" on stderr
 ```
 
-**Check:** wire it into Claude Desktop — config in [05-SETUP.md §5](05-SETUP.md).
+**Check:** wire it into Claude Desktop — config in [08-SETUP.md §5](08-SETUP.md).
 
 **The core server now runs.** 38 files; guardrails, evals and telemetry come in stages 13-15.
 
@@ -384,3 +384,9 @@ body, approve it, and watch the confirmation appear in the transcript.
 | `send_mail` actually sent | the tool is calling Gmail directly instead of `proposeAction` |
 | Approving does nothing | the tool name is missing from the `EXECUTORS` table in `approval.routes.ts` |
 | Cost is always 0 | the model id is not in `ai/pricing.ts`, or the provider does not report token usage |
+
+<!-- nav -->
+
+---
+
+[← Setup](08-SETUP.md) · [Index](README.md) · [Deployment →](10-DEPLOYMENT.md)

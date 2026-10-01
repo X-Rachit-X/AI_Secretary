@@ -269,3 +269,9 @@ Live, to `router.eval.ts`:
 
 The `about` field is not decoration. When a case fails six months from now it is
 the only thing that tells you what it was protecting.
+
+<!-- nav -->
+
+---
+
+[← Guardrails](06-GUARDRAILS.md) · [Index](README.md) · [Setup →](08-SETUP.md)

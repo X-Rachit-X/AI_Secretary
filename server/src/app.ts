@@ -1,4 +1,6 @@
 import express from "express";
+import path from "node:path";
+import { existsSync } from "node:fs";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import type { NextFunction, Request, Response } from "express";
@@ -33,17 +35,34 @@ import { statusOf, toErrorBody } from "./lib/errors.js";
  *   /api/approvals     human-in-the-loop: approve or reject a proposed action
  *   /api/insights      latency, cost and guardrail telemetry
  *   /mcp               Model Context Protocol, for external hosts
+ *
+ * In production (SERVE_WEB=true) the built frontend is also served from here,
+ * which makes a single-container deploy possible. See docs/10-DEPLOYMENT.md.
  */
 
 export const app = express();
 
+/**
+ * CORS.
+ *
+ * `credentials: true` is required for the session cookie to travel from the
+ * Vite dev server on a different port. When SERVE_WEB is on there is only one
+ * origin and this becomes a no-op, which is the simplest deployment to reason
+ * about. EXTRA_CORS_ORIGINS covers the split-host case (API and UI on
+ * different domains).
+ */
+const allowedOrigins = [env.appUrl, ...env.extraCorsOrigins];
+
 app.use(
   cors({
-    origin: env.appUrl,
-    // Required for the session cookie to travel from the Vite dev server.
+    origin: allowedOrigins,
     credentials: true,
   }),
 );
+
+// Behind a reverse proxy (Fly, Railway, Render, nginx) this is what makes
+// req.protocol report "https", which the secure session cookie depends on.
+if (env.isProd) app.set("trust proxy", 1);
 
 app.use(express.json({ limit: "2mb" }));
 app.use(cookieParser());
@@ -84,6 +103,74 @@ app.use("/api/files", fileRoutes);
 app.use("/api/approvals", approvalRoutes);
 app.use("/api/insights", insightsRoutes);
 app.use("/mcp", mcpRoutes);
+
+/**
+ * Serve the built frontend from the same process.
+ *
+ * In development Vite serves the app on :5173 and this block is skipped. In
+ * production SERVE_WEB=true makes one container serve both the API and the UI,
+ * which removes the entire CORS and cookie-domain problem: the browser only
+ * ever talks to one origin.
+ *
+ * The SPA fallback must come AFTER every /api route, or it would swallow them,
+ * and it must exclude /api and /mcp explicitly so an unknown API path still
+ * returns JSON rather than the HTML shell.
+ */
+if (env.serveWeb) {
+  const webDist = path.resolve(process.cwd(), env.webDistPath);
+
+  if (existsSync(webDist)) {
+    // Hashed asset filenames can be cached hard; index.html must not be, or a
+    // deploy leaves browsers pinned to the old bundle.
+    app.use(
+      express.static(webDist, {
+        index: false,
+        setHeaders: (res, filePath) => {
+          if (filePath.endsWith(".html")) {
+            res.setHeader("Cache-Control", "no-cache");
+          } else if (
+            // path.sep, not "/": on Windows this is a backslash and a
+            // hardcoded forward slash would never match.
+            filePath.includes(`${path.sep}assets${path.sep}`)
+          ) {
+            res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+          }
+        },
+      }),
+    );
+
+    /**
+     * SPA fallback: any GET that is not an API path gets index.html, so a deep
+     * link like /insights works on a hard refresh.
+     *
+     * Written as middleware rather than `app.get(regex, ...)` because Express 5
+     * switched to path-to-regexp v8, where a bare RegExp route no longer matches
+     * the way it did in Express 4. Explicit prefix checks are both portable and
+     * easier to read than the lookahead they replace.
+     */
+    const API_PREFIXES = ["/api", "/mcp", "/health"];
+
+    app.use((req, res, next) => {
+      if (req.method !== "GET" && req.method !== "HEAD") return next();
+
+      if (API_PREFIXES.some((prefix) => req.path.startsWith(prefix))) {
+        return next();
+      }
+
+      // sendFile bypasses the setHeaders above, so the no-cache header has to
+      // be set again here. Without it a deploy leaves browsers holding an
+      // index.html that references deleted asset hashes.
+      res.setHeader("Cache-Control", "no-cache");
+      res.sendFile(path.join(webDist, "index.html"));
+    });
+
+    console.log(`[web] serving the built frontend from ${webDist}`);
+  } else {
+    console.warn(
+      `[web] SERVE_WEB is on but ${webDist} does not exist. Run "npm run build" first.`,
+    );
+  }
+}
 
 app.use((_req, res) => {
   res.status(404).json({

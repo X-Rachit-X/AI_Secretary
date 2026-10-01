@@ -1,0 +1,72 @@
+# Local production-like stack: the app plus Postgres.
+#
+#   cp .env.example .env     # fill in the keys
+#   docker compose up --build
+#   open http://localhost:4000
+#
+# This is NOT the development setup — for that use `npm run dev`, which gives
+# you Vite hot reload. This is for checking the production build works, and as
+# a template for a real deploy.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cortex
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cortex_dev_password}
+      POSTGRES_DB: cortex
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    # The app must not start migrating before Postgres accepts connections.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cortex -d cortex"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "4000:4000"
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      SERVE_WEB: "true"
+
+      DATABASE_URL: postgresql://cortex:${POSTGRES_PASSWORD:-cortex_dev_password}@db:5432/cortex
+
+      # One origin serves both the API and the UI, so these are the same host.
+      APP_URL: ${APP_URL:-http://localhost:4000}
+      SERVER_URL: ${SERVER_URL:-http://localhost:4000}
+
+      SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET is required}
+
+      LLM_PROVIDER: ${LLM_PROVIDER:-google}
+      LLM_FALLBACK_PROVIDER: ${LLM_FALLBACK_PROVIDER:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:4000/api/auth/google/callback}
+
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+
+    volumes:
+      # Generated PDFs, decks and images must survive a redeploy. Without this
+      # every container restart loses every file a user generated.
+      - storage:/app/server/storage
+
+volumes:
+  db-data:
+  storage:

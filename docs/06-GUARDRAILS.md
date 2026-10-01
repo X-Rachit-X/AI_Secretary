@@ -363,3 +363,9 @@ The honest summary: **reads are open, writes are gated, and credentials never
 leave the machine.** If your threat model needs more than that, the place to
 start is `GOOGLE_SCOPES` in
 [`auth/google-oauth.ts`](../server/src/auth/google-oauth.ts).
+
+<!-- nav -->
+
+---
+
+[← Data flows](05-DATA-FLOWS.md) · [Index](README.md) · [Evals and gateway →](07-EVALS.md)
