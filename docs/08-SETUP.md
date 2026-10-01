@@ -2,6 +2,10 @@
 
 From a clean machine to a running app.
 
+> **Looking for what a specific variable does?**
+> [10-DEPLOYMENT §10.4](10-DEPLOYMENT.md#104-every-environment-variable) documents
+> all 30, with dev and production values side by side.
+
 ---
 
 ## 1. Prerequisites
@@ -190,11 +194,16 @@ curl -X POST http://localhost:4000/mcp \
 ## 6. Useful commands
 
 ```bash
+npm run setup          # npm install + create the database (first run only)
+
 npm run dev            # server + web together
 npm run dev:server     # server only
 npm run dev:web        # web only
-npm run build          # typecheck and build both
-npm run db:push        # apply schema.prisma to the database
+
+npm run build          # typecheck and build both workspaces
+npm run start          # run the compiled server from dist/ (what production uses)
+
+npm run db:push        # apply schema.prisma to the database (development only)
 npm run db:studio      # browse the data in a GUI
 npm run mcp            # MCP stdio server
 

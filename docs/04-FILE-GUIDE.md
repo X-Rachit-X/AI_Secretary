@@ -210,6 +210,7 @@ runs after they agreed to it.
 
 | File | What it does | The detail worth knowing |
 |---|---|---|
+| **`vite-env.d.ts`** | Types `import.meta.env.VITE_*` | Three lines. Without it `api.ts` reading `VITE_API_URL` falls back to `any`. |
 | **`lib/types.ts`** | Every API shape | Mirrors the server by hand. A shared package would remove the duplication but add a build step to a project whose point is being easy to follow. |
 | **`lib/api.ts`** | The single HTTP client | `credentials: "include"` on every call, or the cookie is not sent and everything 401s. Unwraps error bodies into thrown `ApiError`. |
 | **`lib/sse.ts`** | `streamAgentChat()`, `subscribeToNotifications()` | The manual SSE parser. Keeps the partial tail in a buffer because a network chunk does not align with an event boundary. |
