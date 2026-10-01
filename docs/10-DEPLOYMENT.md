@@ -11,14 +11,15 @@ Six things. Everything else works as-is.
 
 | # | Local | Production | Why |
 |---|---|---|---|
-| 1 | SQLite file | **Postgres** | SQLite has one writer; a restart on ephemeral disk loses it |
+| 1 | SQLite file | **Postgres** (already wired into the Docker image) | SQLite has one writer; a restart on ephemeral disk loses it |
 | 2 | Vite on :5173 | **server serves `web/dist`** | one origin, so CORS and cookie-domain problems disappear |
-| 3 | `prisma db push` | **`prisma migrate deploy`** | `db push` can drop columns to match the schema |
+| 3 | `prisma db push` | **`prisma migrate deploy`** (runs on container boot) | `db push` can drop columns to match the schema |
 | 4 | `secure: false` cookie | **`secure: true`** via `NODE_ENV=production` | the session cookie must be HTTPS-only |
 | 5 | `localhost` redirect URI | **your real domain**, added in Google Cloud | OAuth rejects anything not listed |
 | 6 | `storage/` on disk | **a mounted volume** (or S3) | generated PDFs must survive a redeploy |
 
-Items 2 and 4 are already handled by the code; they just need the env vars.
+Items 1–4 are already handled by the code and the Docker image; they just need
+the env vars.
 
 ```mermaid
 flowchart LR
@@ -36,45 +37,62 @@ flowchart LR
 
 ---
 
-## 10.2 Step 1 — switch to Postgres
+## 10.2 Step 1 — Postgres: already done, here is how it works
 
-One line in the schema:
+Prisma cannot choose a database provider from an environment variable, so the
+repo carries two schema files:
 
-```prisma
-// server/prisma/schema.prisma
-datasource db {
-  provider = "postgresql"    // was "sqlite"
-  url      = env("DATABASE_URL")
-}
-```
+| File | Provider | Used by |
+|---|---|---|
+| `server/prisma/schema.prisma` | `sqlite` | local development (`npm run dev`) — **edit this one** |
+| `server/prisma/postgres/schema.prisma` | `postgresql` | the Docker image — **generated**, never edited by hand |
+| `server/prisma/postgres/migrations/` | `postgresql` | applied by `prisma migrate deploy` on every container boot |
 
-Then create the first migration **locally**, against a local Postgres, and commit
-it:
+The Postgres schema is produced by `server/scripts/postgres-schema.mjs`, which
+copies the SQLite schema and swaps the provider. The models cannot drift
+apart because there is only one place to write them.
+
+The image builds its Prisma client from the Postgres schema and its entrypoint
+is:
 
 ```bash
-# a throwaway Postgres to generate the migration against
+npx prisma migrate deploy --schema=prisma/postgres/schema.prisma && node dist/index.js
+```
+
+So `docker compose up --build` works on a fresh clone with no extra steps.
+
+### When you change a model
+
+```bash
+# 1. edit server/prisma/schema.prisma, then locally:
+npm run db:push                       # update your SQLite dev database
+
+# 2. regenerate the Postgres schema and create a migration for it
 docker run --rm -d --name cortex-pg -p 5432:5432 \
   -e POSTGRES_PASSWORD=dev -e POSTGRES_DB=cortex postgres:16-alpine
 
-cd server
 DATABASE_URL="postgresql://postgres:dev@localhost:5432/cortex" \
-  npx prisma migrate dev --name init
+  npm run db:pg:migrate -- --name add_something
 
-git add prisma/migrations && git commit -m "chore: initial Postgres migration"
+git add server/prisma && git commit -m "feat(db): add something"
 docker rm -f cortex-pg
 ```
 
-> ⚠️ **Migrations must be committed.** The container runs `prisma migrate deploy`
-> on boot, which applies committed migration files. It does not generate them.
-> `.gitignore` currently excludes `server/prisma/migrations/` — remove that line
-> when you move to Postgres.
+> ⚠️ **Migrations must be committed.** The container applies committed
+> migration files; it never generates them. CI enforces this twice: it fails if
+> `postgres/schema.prisma` is stale (`npm run db:pg:sync -- --check`), and it
+> applies the migrations to a real Postgres and fails if they do not produce
+> exactly the schema (`prisma migrate diff --exit-code`).
 
 ### Staying on SQLite instead
 
-Viable for a single-instance deploy *if* the file is on a persistent volume:
+Viable for a single-instance deploy *if* the file is on a persistent volume. The
+Docker image is Postgres-only, so run it directly with Node instead:
 
 ```bash
-DATABASE_URL="file:/data/cortex.db"   # /data is a mounted volume
+npm ci && npm run build
+DATABASE_URL="file:/data/cortex.db" npm run db:push   # /data is a persistent disk
+NODE_ENV=production SERVE_WEB=true DATABASE_URL="file:/data/cortex.db" npm start
 ```
 
 One writer and no horizontal scaling, but genuinely fine for personal use. Be
@@ -410,6 +428,8 @@ jobs:
           cache: npm
 
       - run: npm ci
+      # Fails if postgres/schema.prisma was not regenerated after a model change.
+      - run: npm run db:pg:sync -w server -- --check
       - run: npx prisma generate --schema=server/prisma/schema.prisma
 
       # Typecheck + build both workspaces.
@@ -424,6 +444,11 @@ jobs:
 
 `SESSION_SECRET` is required because `env.ts` validates it at import time — a
 deliberate fail-fast that CI has to satisfy.
+
+The real workflow has a second job, `migrations`, that starts a Postgres service,
+runs `prisma migrate deploy`, and then `prisma migrate diff --exit-code` against
+the schema. A model change without a migration fails CI instead of failing the
+deploy.
 
 ---
 

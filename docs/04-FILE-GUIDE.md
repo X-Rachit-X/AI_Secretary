@@ -242,9 +242,11 @@ runs after they agreed to it.
 | **`Dockerfile`** | Three stages: `deps` installs everything, `build` compiles, `runtime` starts clean and copies only what runs | The final image has no TypeScript compiler, no Vite and no source. `prisma generate` must run *inside* the image because the query engine is platform-specific. |
 | **`docker-compose.yml`** | App + Postgres, with a healthcheck so the app does not migrate before the database accepts connections | A named volume for `storage/`, or every redeploy loses the files users generated. |
 | **`.dockerignore`** | Excludes `node_modules`, `dist`, `.env`, `_legacy` | Keeps the build context small and stops local secrets entering an image layer. |
-| **`.github/workflows/ci.yml`** | Typecheck, build, then `npm run eval` | The offline evals need no API key, which is the only reason this is a real gate rather than a job people learn to ignore. |
+| **`.github/workflows/ci.yml`** | Typecheck, build, `npm run eval`; a second job applies the Postgres migrations to a real Postgres | The offline evals need no API key, which is the only reason this is a real gate rather than a job people learn to ignore. The migration job fails if a model changed without a migration. |
+| **`server/scripts/postgres-schema.mjs`** | Generates `prisma/postgres/schema.prisma` from the SQLite schema (`npm run db:pg:sync`) | Prisma cannot pick a provider from an env var, so prod needs its own schema file. Generating it means the models are only ever written once. |
+| **`server/prisma/postgres/migrations/`** | Committed Postgres migrations | What `migrate deploy` applies on boot. Create new ones with `npm run db:pg:migrate`. |
 
-The entrypoint is `prisma migrate deploy && node dist/index.js`. Already-applied
+The entrypoint is `prisma migrate deploy --schema=prisma/postgres/schema.prisma && node dist/index.js`. Already-applied
 migrations are skipped, so it is safe on every boot. **Never `db push` in
 production** — it can drop columns to match the schema.
 

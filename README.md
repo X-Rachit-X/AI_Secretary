@@ -68,8 +68,9 @@ npm run build      # typecheck + build both workspaces
 npm run mcp        # MCP stdio server for Claude Desktop / Cursor
 ```
 
-**Deploy:** `docker compose up --build` runs the production stack (app + Postgres)
-on <http://localhost:4000>. Four hosting options in
+**Deploy:** `cp .env.example .env`, set `SESSION_SECRET` and your keys, then
+`docker compose up --build` runs the production stack (app + Postgres, migrations
+applied on boot) on <http://localhost:4000>. Four hosting options in
 [docs/10-DEPLOYMENT.md](docs/10-DEPLOYMENT.md).
 
 ---
@@ -81,7 +82,7 @@ on <http://localhost:4000>. Four hosting options in
 | Language | TypeScript, both ends | one language, one mental model |
 | Agents | LangChain + LangGraph (JS) | explicit graph, inspectable state |
 | Backend | Node + Express 5 | one process, no gateway |
-| Database | SQLite + Prisma | zero install; one line to switch to Postgres |
+| Database | SQLite (dev) / Postgres (prod) + Prisma | zero install locally; the Docker image runs committed Postgres migrations |
 | Auth | Google OAuth 2.0 + JWT cookie | one consent does sign-in *and* data access |
 | Frontend | React 19 + Vite + Tailwind v4 | fast, no SSR needed |
 | State | Zustand | three small stores, no boilerplate |
@@ -90,8 +91,9 @@ on <http://localhost:4000>. Four hosting options in
 | LLM gateway | in-process, or OpenRouter | retry, timeout, fallback, cache, cost |
 | Evals | a 300-line runner, no framework | offline suite needs no API key |
 
-**No Docker, no Redis, no MongoDB, no vector database, no S3, no cloud account**
-beyond the API keys.
+**Local development needs no Docker, no Redis, no MongoDB, no vector database,
+no S3 and no cloud account** beyond the API keys. Docker is only for the
+production image.
 
 ---
 
@@ -177,7 +179,9 @@ agent system fits in your head from there.
 cortex-one/
 ├── docs/                  eleven guides
 ├── server/
-│   ├── prisma/            schema.prisma — 9 models
+│   ├── prisma/            schema.prisma — 9 models (SQLite, edit this)
+│   │   └── postgres/      generated Postgres schema + committed migrations
+│   ├── scripts/           postgres-schema.mjs — keeps the two schemas in sync
 │   └── src/
 │       ├── lib/           errors · SSE · storage · time
 │       ├── auth/          OAuth · sessions · the gate
@@ -259,6 +263,7 @@ Actual spend, per agent, is on the **Insights** page.
 ## Evals
 
 ```bash
+npm run db:push           # once, after install: generates the Prisma client
 npm run eval              # 44 cases, ~40ms, no API key needed
 npm run eval -- --live    # + 21 router-accuracy cases
 ```

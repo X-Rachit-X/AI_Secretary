@@ -11,6 +11,8 @@
     "mcp": "tsx src/mcp/stdio.ts",
     "db:push": "prisma db push && prisma generate",
     "db:studio": "prisma studio",
+    "db:pg:sync": "node scripts/postgres-schema.mjs",
+    "db:pg:migrate": "npm run db:pg:sync && prisma migrate dev --schema prisma/postgres/schema.prisma --skip-generate",
     "eval": "tsx src/evals/run.ts",
     "eval:live": "tsx src/evals/run.ts --live --json"
   },
