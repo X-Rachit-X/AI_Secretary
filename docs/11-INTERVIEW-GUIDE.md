@@ -476,28 +476,52 @@ Answer the real question, which is about scaling.
 
 ## 11.6 "What would you do differently?"
 
-Have three real answers. Vague ones read as not having thought about it.
+Have four real answers. Vague ones read as not having thought about it, and the
+first is the strongest because it is a criticism of a rule you yourself wrote.
 
-> **"Token-level streaming."** Progress lines stream but the answer arrives whole.
-> The gateway is the right place to add it, and I'd want it before anyone used this
-> daily — a 15-second wait with a status line is acceptable, but words appearing is
-> better.
+> **"`vision` and `docqa` should be tools, not nodes."**
 >
-> **"Persist the document index."** A follow-up question re-embeds the whole PDF.
-> Keying the store by file hash would fix it in about ten lines. I left it because
-> the first version was about showing the retrieval pipeline clearly.
+> "I made content capabilities into tools using the rule *an agent decides, a
+> tool does* — and then left two things as nodes that decide nothing. `vision`
+> is one model call on an image. `docqa` is a pipeline. Neither loops.
 >
-> **"Separate the scheduler."** `node-cron` in the app process means N instances
-> give N sweeps. Dedupe keys make that safe but wasteful. It should be a
-> single-replica job hitting the sweep endpoint.
+> I kept them as nodes because the router picks them from the MIME type, but
+> that's an argument about routing convenience, not about whether they decide.
+> And it costs something real: *'summarise this PDF and make slides from it'* is
+> impossible today, because docqa answers and the turn ends.
+>
+> It's tracked as ADR 19. Fixing it drops the graph to three nodes and deletes
+> more than it adds."
 
-And if pushed on the design:
+> **"The credit system isn't needed."**
+>
+> "One user, who owns the API keys. Charging them credits protects nobody, and
+> the rate limiter already caps runaway loops.
+>
+> I kept it because it demonstrates two things that are genuinely easy to get
+> wrong — a check-and-decrement in one atomic statement rather than
+> read-then-write, and a compensating transaction that refunds when the work
+> throws. But it's ~120 lines solving a problem this app doesn't have, and I'd
+> cut it if the brief were minimalism."
 
-> **"I'd question the credit system."** It's well implemented — atomic, with
-> refunds — but it solves a problem a personal assistant doesn't have. I'd keep the
-> rate limits and drop the wallet unless there were real multi-tenant billing.
+> **"`studio` and `workspace` can't collaborate."**
+>
+> "*'Summarise my unread mail into a PDF'* fails. One loop reads mail, the other
+> makes PDFs, no path does both.
+>
+> The fix I'd reach for isn't a full supervisor — that's a model call per
+> delegation and it reintroduces the orchestration I just deleted. It's a single
+> read-only `fetch_my_mail` tool on the studio side, so the common direction
+> works without the approval-gated write tools leaking into the studio prompt."
 
----
+> **"Token-level streaming."**
+>
+> "Progress lines stream but the answer arrives whole. The gateway is the right
+> place to add it, and I'd want it before anyone used this daily."
+
+> 💡 Being asked for your blind spots and having specific, written-down answers
+> is worth more than the entire feature list. All four are in
+> [13-DECISIONS](13-DECISIONS.md) as ADRs 19–21 with their triggers.
 
 ## 11.7 Live demo script
 

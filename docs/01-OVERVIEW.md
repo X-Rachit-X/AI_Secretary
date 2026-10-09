@@ -264,7 +264,9 @@ dangerous tools cannot act, only propose.
 | Local file storage | survives restarts via a volume, but not multi-host without S3 |
 | No token-level streaming | progress lines stream; the answer arrives whole |
 | No per-session revocation | the trade for a signed cookie instead of a session store |
-| Re-embeds on each doc question | a follow-up re-embeds the PDF; cache by file hash to fix |
+| `vision`/`docqa` are nodes, not tools | inconsistent with the rule the rest follows; blocks "summarise this PDF and make slides" ([ADR 19](13-DECISIONS.md#adr-19-vision-and-docqa-stay-nodes-for-now)) |
+| `studio` and `workspace` cannot collaborate | "summarise my unread mail into a PDF" fails ([ADR 21](13-DECISIONS.md#adr-21-studio-and-workspace-do-not-collaborate)) |
+| The credit system is not needed | one user, who owns the keys ([ADR 20](13-DECISIONS.md#adr-20-the-credit-system-stays-though-it-is-not-needed)) |
 
 Knowing the limits of your own design is most of what "senior" means.
 

@@ -26,6 +26,9 @@ important one: **a decision you cannot say "revisit when…" about is a guess.**
 | [16](#adr-16-content-capabilities-are-tools-not-agents) | Content capabilities are tools, not agents | accepted, replaced ADR 16 v1 |
 | [17](#adr-17-cache-three-of-the-six-layers) | Cache three of the six layers | accepted |
 | [18](#adr-18-cron-in-process-with-a-worker-escape-hatch) | Cron in-process, with a worker escape hatch | accepted |
+| [19](#adr-19-vision-and-docqa-stay-nodes-for-now) | `vision` and `docqa` stay nodes, for now | **accepted with a known inconsistency** |
+| [20](#adr-20-the-credit-system-stays-though-it-is-not-needed) | The credit system stays, though it is not needed | **accepted, deliberately unnecessary** |
+| [21](#adr-21-studio-and-workspace-do-not-collaborate) | `studio` and `workspace` do not collaborate | **accepted limitation** |
 
 ---
 
@@ -503,6 +506,127 @@ a single consumer is the next step up.
 **Revisit when** you need more than one kind of background job, retries with
 backoff per job, or a job that takes minutes rather than milliseconds. Then a
 queue earns its keep.
+
+---
+
+## ADR 19: `vision` and `docqa` stay nodes, for now
+
+**Status: accepted, with a known inconsistency.** This one does not fully hold
+up, and saying so is more useful than pretending otherwise.
+
+**Decision.** `vision` and `docqa` remain graph nodes rather than becoming tools
+of the studio agent.
+
+**Why it is inconsistent.** [ADR 16](#adr-16-content-capabilities-are-tools-not-agents)
+established the rule: *an agent decides, a tool does.* Apply it honestly:
+
+| Node | What it does | Decides anything? |
+|---|---|---|
+| `vision` | read file → one model call → answer | **no** |
+| `docqa` | extract → chunk → embed → search → one model call → answer | **no** |
+
+Neither loops. Neither branches on anything learned at runtime. By the same rule
+that turned `pdf`, `ppt`, `image`, `coding` and `search` into tools, **these are
+tools too** — `analyze_image` and `read_document`.
+
+**Why they are still nodes.** The router selects them deterministically from the
+upload's MIME type, which made keeping them as nodes the smaller change at the
+time. But that is an argument about *routing convenience*, not evidence they
+make decisions. The rule does not have an exception for "the router already
+knows".
+
+**What it costs, concretely.** A real request is impossible today:
+
+> *"Summarise this PDF and make slides from it."*
+
+`docqa` answers and the turn ends. As a studio tool it would be
+`read_document` then `make_deck`. Same for *"what's in this screenshot? put it in
+a doc"*.
+
+**What fixing it looks like.** Move both into `ai/content/`, wrap as tools, and
+have the router send any file upload to `studio` with the file in state. The
+graph drops to three nodes — `chat`, `studio`, `workspace` — and the change
+deletes more code than it adds.
+
+**Revisit when** someone asks for a document-plus-generation request, or sooner
+if consistency matters more than the hour it takes. It is tracked rather than
+hidden because an inconsistency you can name is a different thing from one you
+have not noticed.
+
+---
+
+## ADR 20: The credit system stays, though it is not needed
+
+**Status: accepted, deliberately unnecessary.**
+
+**Decision.** Keep `services/credits.service.ts`, the wallet columns and
+`runBilled`, even though a single-user personal assistant has no billing
+problem to solve.
+
+**The honest position.** This is complexity without a requirement. There is one
+user. They own the API keys. Charging themselves credits protects nobody, and
+the per-agent rate limiter already caps runaway loops — so the two together are
+belt-and-braces for an audience of one.
+
+**Why it stays anyway.** It is a working demonstration of two things that are
+genuinely hard to get right and that interviewers ask about:
+
+```ts
+// the check and the decrement in ONE statement
+const result = await prisma.user.updateMany({
+  where: { id: userId, credits: { gte: cost } },
+  data:  { credits: { decrement: cost } },
+});
+if (result.count === 0) throw AppError.insufficientCredits(cost, have);
+```
+
+A read-then-write would let two parallel requests both pass the balance check
+and push it negative. And `runBilled` is a **compensating transaction**: charge,
+run, refund on throw — so a malformed model response costs the user nothing.
+
+**Trade-off.** Roughly 120 lines and one mental concept that a reader has to
+carry while learning the rest of the system.
+
+**Revisit when** the project is being judged on minimalism rather than on
+breadth, or if it ever genuinely becomes single-user-only with no intention of
+showing the pattern. Removing it is a clean deletion: drop the service, the two
+columns, the header counter, and unwrap `runBilled`.
+
+---
+
+## ADR 21: `studio` and `workspace` do not collaborate
+
+**Status: accepted limitation.**
+
+**Decision.** The two ReAct loops are siblings under the router. Neither can
+call the other, and there is no supervisor above them.
+
+**What that costs.** Requests spanning both fail:
+
+> *"Summarise my unread mail into a PDF."*
+> *"Make a deck from my Q3 meeting notes."*
+
+`workspace` can read the mail and `studio` can make the PDF, but no path does
+both. The router picks one, and that one does what it can.
+
+**Why it is this way.** The alternative is a supervisor that delegates to both —
+which is the re-planning supervisor argued against in
+[ADR 16](#adr-16-content-capabilities-are-tools-not-agents). It costs a model
+call per delegation, it can loop, and it reintroduces the orchestration layer
+just deleted.
+
+The two loops are also deliberately separate: 21 tool descriptions in one prompt
+degrades selection, and the Google tools carry a human-approval gate and a very
+different system prompt. Merging them would dilute both.
+
+**The honest framing.** This is the price of two focused loops instead of one
+crowded one, and it is a real price — not a non-issue.
+
+**Revisit when** cross-domain requests actually come up. The cheapest fix is not
+a full supervisor: give `studio` a single read-only `fetch_my_mail` tool, so the
+common direction (workspace data → studio artefact) works without a new
+orchestration layer and without the approval-gated write tools leaking into the
+studio prompt.
 
 ---
 
