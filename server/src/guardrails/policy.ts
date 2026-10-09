@@ -131,8 +131,8 @@ export const POLICY = {
      * redacted system prompt is still a leaked system prompt.
      */
     leakMarkers: [
-      "You are CortexOne Workspace",
-      "You are CortexOne, a sharp and direct",
+      "You are AI Secretary Workspace",
+      "You are AI Secretary, a sharp and direct",
       "Working with tools:",
       "TRUST BOUNDARY",
       "UNTRUSTED CONTENT",

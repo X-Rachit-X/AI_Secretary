@@ -168,14 +168,14 @@ So `docker compose up --build` works on a fresh clone with no extra steps.
 npm run db:push
 
 # 2. regenerate the Postgres schema and create a migration for it
-docker run --rm -d --name cortex-pg -p 5432:5432 \
-  -e POSTGRES_PASSWORD=dev -e POSTGRES_DB=cortex postgres:16-alpine
+docker run --rm -d --name ai-secretary-pg -p 5432:5432 \
+  -e POSTGRES_PASSWORD=dev -e POSTGRES_DB=ai_secretary postgres:16-alpine
 
-DATABASE_URL="postgresql://postgres:dev@localhost:5432/cortex" \
+DATABASE_URL="postgresql://postgres:dev@localhost:5432/ai_secretary" \
   npm run db:pg:migrate -- --name add_something
 
 git add server/prisma && git commit -m "feat(db): add something"
-docker rm -f cortex-pg
+docker rm -f ai-secretary-pg
 ```
 
 > ⚠️ **Migrations must be committed.** The container applies committed migration
@@ -191,8 +191,8 @@ Docker image is Postgres-only, so run it directly with Node:
 
 ```bash
 npm ci && npm run build
-DATABASE_URL="file:/data/cortex.db" npm run db:push    # /data is a persistent disk
-NODE_ENV=production SERVE_WEB=true DATABASE_URL="file:/data/cortex.db" npm start
+DATABASE_URL="file:/data/ai-secretary.db" npm run db:push    # /data is a persistent disk
+NODE_ENV=production SERVE_WEB=true DATABASE_URL="file:/data/ai-secretary.db" npm start
 ```
 
 One writer and no horizontal scaling, but genuinely fine for personal use. Be
@@ -403,7 +403,7 @@ SERVE_WEB=true
 APP_URL=https://your-domain.com
 SERVER_URL=https://your-domain.com
 SESSION_SECRET=<64 hex chars>
-DATABASE_URL=postgresql://cortex:pass@db:5432/cortex
+DATABASE_URL=postgresql://ai_secretary:pass@db:5432/ai_secretary
 GOOGLE_API_KEY=<AI Studio key>
 GOOGLE_CLIENT_ID=<from Google Cloud>
 GOOGLE_CLIENT_SECRET=<from Google Cloud>
@@ -584,7 +584,7 @@ fly launch --no-deploy
 **B.3 — write `fly.toml`.**
 
 ```toml
-app = "cortex-one"
+app = "ai-secretary"
 primary_region = "iad"          # pick one near you
 
 [build]
@@ -616,7 +616,7 @@ primary_region = "iad"          # pick one near you
   path = "/health"
 
 [[mounts]]
-  source = "cortex_storage"
+  source = "ai_secretary_storage"
   destination = "/app/server/storage"
 ```
 
@@ -628,10 +628,10 @@ primary_region = "iad"          # pick one near you
 **B.4 — create Postgres and a volume.**
 
 ```bash
-fly postgres create --name cortex-db --region iad
-fly postgres attach cortex-db          # injects DATABASE_URL automatically
+fly postgres create --name ai-secretary-db --region iad
+fly postgres attach ai-secretary-db          # injects DATABASE_URL automatically
 
-fly volumes create cortex_storage --region iad --size 1
+fly volumes create ai_secretary_storage --region iad --size 1
 ```
 
 **B.5 — set secrets.** These are encrypted; never put them in `fly.toml`.
@@ -642,9 +642,9 @@ fly secrets set \
   GOOGLE_API_KEY="..." \
   GOOGLE_CLIENT_ID="..." \
   GOOGLE_CLIENT_SECRET="..." \
-  GOOGLE_REDIRECT_URI="https://cortex-one.fly.dev/api/auth/google/callback" \
-  APP_URL="https://cortex-one.fly.dev" \
-  SERVER_URL="https://cortex-one.fly.dev" \
+  GOOGLE_REDIRECT_URI="https://ai-secretary.fly.dev/api/auth/google/callback" \
+  APP_URL="https://ai-secretary.fly.dev" \
+  SERVER_URL="https://ai-secretary.fly.dev" \
   TAVILY_API_KEY="..." \
   LLM_FALLBACK_PROVIDER="groq" \
   GROQ_API_KEY="..."
@@ -849,10 +849,10 @@ fly deploy                          # Fly
 
 ```bash
 # compose
-docker compose exec db pg_dump -U cortex cortex > backup-$(date +%F).sql
+docker compose exec db pg_dump -U ai_secretary ai_secretary > backup-$(date +%F).sql
 
 # Fly
-fly postgres connect -a cortex-db   # then \copy, or use their snapshots
+fly postgres connect -a ai-secretary-db   # then \copy, or use their snapshots
 ```
 
 Fly and Railway both offer automated snapshots. **Turn them on.**
@@ -860,7 +860,7 @@ Fly and Railway both offer automated snapshots. **Turn them on.**
 ### Restore
 
 ```bash
-cat backup-2026-10-01.sql | docker compose exec -T db psql -U cortex cortex
+cat backup-2026-10-01.sql | docker compose exec -T db psql -U ai_secretary ai_secretary
 ```
 
 ### Rotate the session secret

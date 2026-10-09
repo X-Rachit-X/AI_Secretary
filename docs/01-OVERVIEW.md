@@ -1,6 +1,6 @@
 # 1. Overview
 
-What CortexOne is, what it does, and how the pieces fit. Read this first; by the
+What AI Secretary is, what it does, and how the pieces fit. Read this first; by the
 end you should be able to picture the whole system.
 
 ---
@@ -193,23 +193,25 @@ Every file opens with a comment explaining *why it exists*, not just what it doe
 
 ---
 
-## 1.7 Where it came from
+## 1.7 What is deliberately absent
 
-Two earlier projects, merged:
+A GenAI project of this shape usually accumulates infrastructure. This one does
+not, and each absence is a decision rather than an oversight:
 
 ```mermaid
 graph LR
-    A["cortex-ai<br/>JS microservices<br/>8 agents · credits · artifacts<br/>Firebase · MongoDB · Redis<br/>Qdrant · S3 · Razorpay"]
-    B["agentic-calendar-assistant<br/>TS monolith<br/>Mastra · Google Calendar<br/>Descope · Postgres · MCP"]
-
-    A --> C["CortexOne"]
-    B --> C
-    C --> D["+ Gmail<br/>+ notifications<br/>+ guardrails<br/>+ evals<br/>+ gateway<br/>+ traces"]
+    A["Redis"] -.->|"not needed:<br/>one process"| X["in-memory Map<br/>+ a documented<br/>migration path"]
+    B["vector DB"] -.->|"not needed:<br/>throwaway index"| Y["~100 lines of<br/>cosine similarity"]
+    C["S3"] -.->|"not needed:<br/>single host"| Z["local disk behind<br/>one narrow interface"]
+    D["microservices"] -.->|"not needed:<br/>same scaling profile"| W["one Express app"]
 ```
 
-Along the way: two auth vendors → one, five services → one process, four
-datastores → one database. [03-ARCHITECTURE §3.3](03-ARCHITECTURE.md) has the
-full before/after table and the reason for each removal.
+The point is not minimalism for its own sake. It is that **every component
+should solve a problem the code actually has** — and that you should be able to
+say precisely when each absence stops being the right answer.
+
+[13-DECISIONS.md](13-DECISIONS.md) records each one with its trade-off and the
+trigger that would change it.
 
 ---
 

@@ -1,5 +1,5 @@
 {
-  "name": "cortex-one",
+  "name": "ai-secretary",
   "private": true,
   "version": "1.0.0",
   "description": "One multi-agent assistant: chat, web search, code, PDF, PPT, images, vision, doc Q&A, Google Calendar, Gmail and notifications.",

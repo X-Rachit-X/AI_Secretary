@@ -707,7 +707,7 @@ instruction for queries than for the passages being searched.
 ### Step 5: ground the answer
 
 ```ts
-const SYSTEM = `You are CortexOne Document Assistant.
+const SYSTEM = `You are AI Secretary Document Assistant.
 
 Rules:
 - Answer ONLY from the provided document context.
@@ -809,7 +809,7 @@ function textResult(data: unknown) {
 // server/src/mcp/stdio.ts
 // IMPORTANT: stdout is the protocol channel. Anything printed there corrupts
 // the stream, so every log in this file goes to stderr.
-console.error("[mcp] cortex-one stdio server ready");
+console.error("[mcp] ai-secretary stdio server ready");
 ```
 
 > ⚠️ One stray `console.log` in a stdio MCP server breaks it, with a confusing
@@ -847,7 +847,7 @@ same session cookie the rest of the API uses.
 ```ts
 server.tool(
   "send_mail",
-  "PROPOSE sending an email from the user's Gmail. This does not send it — the user must approve in CortexOne first.",
+  "PROPOSE sending an email from the user's Gmail. This does not send it — the user must approve in AI Secretary first.",
   { to: z.array(z.string()).min(1), subject: z.string().min(1), body: z.string().min(1) },
   async (input) => guard(async () =>
     JSON.parse(await proposeAction(context, "send_mail", input)),
@@ -860,7 +860,7 @@ policy: the thing we refuse to let our own agent do unsupervised would be one
 `tools/call` away for any host on the machine.
 
 **Consequence, stated plainly:** an MCP host cannot send mail. It can draft and
-propose; the human confirms in CortexOne. That is the intended behaviour.
+propose; the human confirms in AI Secretary. That is the intended behaviour.
 
 ---
 
@@ -1084,7 +1084,7 @@ Every Google call in the app goes through `calendarFor(userId)` or
 // server/src/auth/session.ts
 const token = jwt.sign(claims, env.sessionSecret, { expiresIn: "7d" });
 
-res.cookie("cortex_session", token, {
+res.cookie("ai_secretary_session", token, {
   httpOnly: true,       // unreadable from JavaScript → XSS cannot steal it
   secure: env.isProd,   // HTTPS only in production
   sameSite: "lax",      // survives the OAuth redirect, blocks cross-site POST
@@ -1139,7 +1139,7 @@ from the account owner. **The attacker needs no cooperation from the user at all
 
 ```ts
 // server/src/guardrails/untrusted.ts
-const FENCE = "cortex-untrusted-7f3a9c";
+const FENCE = "secretary-untrusted-7f3a9c";
 
 export function wrapUntrusted(source: string, content: string): string {
   // Neutralise the fence inside the content, or a crafted email could close the

@@ -17,7 +17,7 @@ import type { GraphStateType } from "../state.js";
  * field we would then have to parse.
  */
 
-const PROMPT = `You are CortexOne Coding Agent.
+const PROMPT = `You are AI Secretary Coding Agent.
 
 FIRST decide the intent:
   BUILD   - the user wants something created (a site, a page, a component, a script)

@@ -120,7 +120,7 @@ function build(provider: LlmProvider, role: ModelRole): BaseChatModel {
           defaultHeaders: {
             // OpenRouter uses these for its public model-usage leaderboard.
             "HTTP-Referer": env.appUrl,
-            "X-Title": "CortexOne",
+            "X-Title": "AI Secretary",
           },
         },
       });

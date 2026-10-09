@@ -1,4 +1,4 @@
-# CortexOne — one container that serves the API and the built frontend.
+# AI Secretary — one container that serves the API and the built frontend.
 #
 # Three stages, and the reason for each:
 #

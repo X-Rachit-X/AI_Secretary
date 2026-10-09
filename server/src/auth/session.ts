@@ -12,7 +12,7 @@ import { env } from "../env.js";
  * every request still loads the user row, so a deleted user is rejected.
  */
 
-const COOKIE_NAME = "cortex_session";
+const COOKIE_NAME = "ai_secretary_session";
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type SessionClaims = {

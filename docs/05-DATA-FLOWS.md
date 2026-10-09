@@ -29,7 +29,7 @@ sequenceDiagram
     G-->>A: id, email, name, picture
     A->>DB: upsert User
     A->>DB: upsert GoogleAccount (tokens)
-    A-->>B: Set-Cookie: cortex_session=<jwt>; HttpOnly
+    A-->>B: Set-Cookie: ai_secretary_session=<jwt>; HttpOnly
     A-->>B: 302 to APP_URL/chat
 ```
 

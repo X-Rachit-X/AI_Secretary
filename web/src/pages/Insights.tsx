@@ -257,11 +257,29 @@ export default function Insights() {
                 label="Fallback"
                 value={gateway.fallbackProvider ?? "none"}
               />
-              <Row label="Timeout" value={`${gateway.timeoutMs / 1000}s`} />
+              <Row label="Model timeout" value={`${gateway.timeoutMs / 1000}s`} />
+              <Row
+                label="Tool timeout"
+                value={`${gateway.googleTimeoutMs / 1000}s`}
+              />
               <Row label="Max retries" value={String(gateway.maxRetries)} />
               <Row
-                label="Cached routes"
+                label="Cache entries"
                 value={`${gateway.cache.entries} / ${gateway.cache.maxEntries}`}
+              />
+              <Row
+                label="Cache hit rate"
+                value={
+                  gateway.cache.hitRate === null
+                    ? "no lookups yet"
+                    : `${(gateway.cache.hitRate * 100).toFixed(0)}% (${gateway.cache.hits}/${
+                        gateway.cache.hits + gateway.cache.misses
+                      })`
+                }
+              />
+              <Row
+                label="Evictions"
+                value={String(gateway.cache.evictions)}
               />
             </dl>
           </section>

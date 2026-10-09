@@ -9,7 +9,7 @@ Every file, what it does, and what it depends on. Use this as a map while you wr
 ## 4.1 Folder shape
 
 ```
-cortex-one/
+ai-secretary/
 ├── package.json              npm workspaces + the dev script
 ├── .env.example              every key, commented
 ├── Dockerfile                3-stage build: deps → build → runtime
@@ -79,7 +79,7 @@ cortex-one/
 
 | File | What it does | The detail worth knowing |
 |---|---|---|
-| **`client.ts`** | Hands out authenticated `calendar` / `gmail` clients | The `tokens` listener catches a refreshed access token and writes it back, so token refresh lives in exactly one place. |
+| **`client.ts`** | Hands out authenticated `calendar` / `gmail` clients, each with a `GOOGLE_TIMEOUT_MS` deadline | The `tokens` listener catches a refreshed access token and writes it back, so token refresh lives in exactly one place. The timeout is set here rather than per call: the gateway bounds model calls, and without this a hung Google request would have no ceiling at all. |
 | **`calendar.ts`** | `listMeetings`, `getMeeting`, `createMeeting`, `rescheduleMeeting`, `cancelMeeting`, `checkBusy`, `findFreeSlot` | `singleEvents: true` expands a recurring event into occurrences, which is what "my next three meetings" should mean. `conferenceDataVersion: 1` is required for Google to actually mint the Meet link. |
 | **`gmail.ts`** | `listMail`, `readMail`, `sendMail`, `replyToMail`, `markMailRead`, `mailStats` | Bodies arrive base64url-encoded in a nested MIME tree, so `extractBody` walks it: prefers `text/plain`, falls back to `text/html` with tags stripped. Replying needs `threadId` **plus** `In-Reply-To`, or Gmail shows it as a new conversation. |
 

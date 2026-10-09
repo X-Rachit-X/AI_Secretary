@@ -28,7 +28,7 @@ const TOP_K = 5;
 const CHUNK_SIZE = 1000;
 const CHUNK_OVERLAP = 200;
 
-const SYSTEM = `You are CortexOne Document Assistant.
+const SYSTEM = `You are AI Secretary Document Assistant.
 
 Rules:
 - Answer ONLY from the provided document context.

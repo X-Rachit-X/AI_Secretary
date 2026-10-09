@@ -44,7 +44,7 @@ export const GraphState = Annotation.Root({
   /** The user's message for this turn. */
   prompt: Annotation<string>(),
 
-  /** CortexOne User.id. Needed for Google calls, credits and storage. */
+  /** AI Secretary User.id. Needed for Google calls, credits and storage. */
   userId: Annotation<string>(),
 
   /** Conversation this turn belongs to. */

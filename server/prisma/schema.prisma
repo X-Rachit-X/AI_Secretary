@@ -1,4 +1,4 @@
-// CortexOne data model.
+// AI Secretary data model.
 //
 // SQLite keeps local setup to zero steps. Production runs on Postgres using
 // postgres/schema.prisma, which is GENERATED from this file — after editing a

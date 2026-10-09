@@ -18,7 +18,7 @@ async function main() {
 
   const server = app.listen(env.port, () => {
     console.log("");
-    console.log("  CortexOne server");
+    console.log("  AI Secretary server");
     console.log(`  http://localhost:${env.port}`);
     console.log("");
     console.log(`  LLM provider    ${env.llmProvider}`);

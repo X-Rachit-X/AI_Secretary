@@ -9,15 +9,15 @@ Each stage ends with **something you can run and see working**. That matters mor
 ## Stage 0 — Scaffold (15 min)
 
 ```
-cortex-one/
+ai-secretary/
 ├── package.json          workspaces: ["server", "web"]
 ├── .gitignore
 └── .env.example
 ```
 
 ```bash
-mkdir -p cortex-one/{server/src,web/src}
-cd cortex-one && npm init -y
+mkdir -p ai-secretary/{server/src,web/src}
+cd ai-secretary && npm init -y
 ```
 
 Set `"workspaces": ["server", "web"]` and `"type": "module"` in the root package.json.
@@ -92,8 +92,8 @@ npx prisma studio      # User and GoogleAccount should each have a row
 Grab your session cookie from the browser devtools, then:
 
 ```bash
-curl -H "Cookie: cortex_session=..." http://localhost:4000/api/calendar/meetings
-curl -H "Cookie: cortex_session=..." "http://localhost:4000/api/mail/messages?q=is:unread"
+curl -H "Cookie: ai_secretary_session=..." http://localhost:4000/api/calendar/meetings
+curl -H "Cookie: ai_secretary_session=..." "http://localhost:4000/api/mail/messages?q=is:unread"
 ```
 
 **Check:** your real meetings and real unread mail come back as JSON. **Do not move on until this works** — every agent above it depends on these functions being right.
@@ -215,7 +215,7 @@ curl -H "Cookie: ..." http://localhost:4000/api/notifications
 
 ```bash
 curl -X GET http://localhost:4000/mcp     # expect 405 with an Allow header
-npm run mcp                                # expect "[mcp] cortex-one stdio server ready" on stderr
+npm run mcp                                # expect "[mcp] ai-secretary stdio server ready" on stderr
 ```
 
 **Check:** wire it into Claude Desktop — config in [08-SETUP.md §5](08-SETUP.md).

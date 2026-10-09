@@ -20,7 +20,7 @@ import type { GraphStateType } from "../state.js";
  * came back empty, and the answer is worded differently in each case.
  */
 
-const BASE_PROMPT = `You are CortexOne, a sharp and direct AI assistant.
+const BASE_PROMPT = `You are AI Secretary, a sharp and direct AI assistant.
 
 Rules:
 - Short questions and greetings get short, plain answers. No headings.

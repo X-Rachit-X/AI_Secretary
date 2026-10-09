@@ -7,7 +7,7 @@ measure whether it still works, and one place where every model call happens.
 
 ## 7.1 Why evals, in a project this size
 
-Every behaviour that matters in CortexOne is decided by a prompt or a regex, and
+Every behaviour that matters in AI Secretary is decided by a prompt or a regex, and
 both regress silently.
 
 Change one line of the router prompt and routing accuracy can drop ten points
@@ -216,6 +216,10 @@ and per-run usage either way. They are not alternatives.
 ---
 
 ## 7.7 Observability
+
+> **Full detail is now in [12-OBSERVABILITY.md](12-OBSERVABILITY.md)** — what a
+> run records, every metric, what is deliberately not logged, and how to read
+> the Insights page. This section is the summary.
 
 [`server/src/services/trace.service.ts`](../server/src/services/trace.service.ts)
 · [Insights page](../web/src/pages/Insights.tsx)

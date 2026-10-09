@@ -1,6 +1,6 @@
-# CortexOne documentation
+# AI Secretary documentation
 
-Eleven documents, in reading order. Each one ends with a link to the next, so you
+Fourteen documents, in reading order. Each one ends with a link to the next, so you
 can start at the top and keep going.
 
 ---
@@ -20,6 +20,8 @@ can start at the top and keep going.
 | 09 | [Build order](09-BUILD-ORDER.md) | Type it out yourself, 16 checkpoints | 12 hrs doing |
 | 10 | [Deployment](10-DEPLOYMENT.md) | Docker, Postgres, four hosting options, SSL, migrations | 45 min doing |
 | 11 | [Interview guide](11-INTERVIEW-GUIDE.md) | Every question you will be asked, and how to answer it | 45 min |
+| 12 | [Observability](12-OBSERVABILITY.md) | What a run records, the metrics, what is **not** logged, the Insights page | 20 min |
+| 13 | [Decisions](13-DECISIONS.md) | 15 architecture decisions, each with its trade-off and "revisit when" | 20 min |
 
 ---
 
@@ -34,7 +36,8 @@ flowchart TD
     A -->|"Build it myself"| P3["02 Concepts<br/>09 Build order<br/>04 File guide as reference"]
     A -->|"Change something"| P4["04 File guide<br/>05 Data flows<br/>07 Evals before you commit"]
     A -->|"Ship it"| P5["08 Setup<br/>10 Deployment"]
-    A -->|"Explain it in an interview"| P6["02 Concepts<br/>06 Guardrails<br/>11 Interview guide"]
+    A -->|"Explain it in an interview"| P6["02 Concepts<br/>06 Guardrails<br/>11 Interview guide<br/>13 Decisions"]
+    A -->|"Debug cost or latency"| P7["12 Observability"]
 ```
 
 ### I want to understand how it works
@@ -57,8 +60,12 @@ can run.
 **08 → 10.** Docker Compose, Fly, Railway and a plain VPS are all covered.
 
 ### I have an interview on this
-**02 → 06 → 11.** Doc 11 is the one that matters: the questions, the answers, and
-the trade-offs you should be able to defend.
+**02 → 06 → 11 → 13.** Doc 11 has the questions and answers; doc 13 has the
+decisions with their trade-offs, which is what "defend it" actually means.
+
+### Something is slow, expensive or behaving oddly
+**12 Observability.** Which metric answers which question, and how to read the
+Insights page.
 
 ---
 

@@ -95,7 +95,7 @@ may not be current.
 ## 4. Install and run
 
 ```bash
-cd cortex-one
+cd ai-secretary
 
 # 1. dependencies for both workspaces
 npm install
@@ -135,7 +135,7 @@ Open **<http://localhost:5173>** and sign in.
 The server banner tells you what is configured:
 
 ```
-  CortexOne server
+  AI Secretary server
   http://localhost:4000
 
   LLM provider    google
@@ -164,11 +164,11 @@ Edit `claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "cortex-one": {
+    "ai-secretary": {
       "command": "npx",
       "args": ["tsx", "src/mcp/stdio.ts"],
-      "cwd": "C:/path/to/cortex-one/server",
-      "env": { "CORTEX_USER_EMAIL": "you@gmail.com" }
+      "cwd": "C:/path/to/ai-secretary/server",
+      "env": { "SECRETARY_USER_EMAIL": "you@gmail.com" }
     }
   }
 }
@@ -178,14 +178,14 @@ Restart Claude Desktop. Ten tools appear: `list_meetings`, `create_meeting`,
 `cancel_meeting`, `check_busy`, `find_free_slot`, `search_mail`, `read_mail`,
 `send_mail`, `create_reminder`, `list_notifications`.
 
-If exactly one account exists in the database you can omit `CORTEX_USER_EMAIL`.
+If exactly one account exists in the database you can omit `SECRETARY_USER_EMAIL`.
 
 ### Over HTTP
 
 ```bash
 curl -X POST http://localhost:4000/mcp \
   -H "Content-Type: application/json" \
-  -H "Cookie: cortex_session=<your cookie>" \
+  -H "Cookie: ai_secretary_session=<your cookie>" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
@@ -232,7 +232,7 @@ reason to skip it.
 | No notifications ever appear | You need a meeting within `REMINDER_LEAD_MINUTES`. Press **Check now** on the Alerts page to run the sweep immediately. |
 | `Cannot find module './env'` | Add the `.js` extension. `module: NodeNext` requires it on relative imports, even in `.ts` files. |
 | The agent describes an email but never sends it | **Working as intended.** `send_mail` requires approval; press Approve on the card. See [06-GUARDRAILS](06-GUARDRAILS.md). |
-| An MCP host cannot send mail | Also intended. MCP proposes; you confirm in CortexOne. |
+| An MCP host cannot send mail | Also intended. MCP proposes; you confirm in AI Secretary. |
 | A legitimate message is blocked | Loosen the pattern in `guardrails/policy.ts`, then add a false-positive eval case so it stays loose. |
 | Insights shows $0.00 for everything | Your model id is not in `ai/pricing.ts`, or the provider does not report token counts. |
 | `EPERM ... query_engine-windows.dll.node` on `prisma generate` | A node process is holding the engine. Stop the dev server first. |

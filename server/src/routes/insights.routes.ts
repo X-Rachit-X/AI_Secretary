@@ -41,6 +41,7 @@ insightsRoutes.get("/", async (req, res) => {
         fallbackProvider: env.llmFallbackProvider ?? null,
         timeoutMs: env.llmTimeoutMs,
         maxRetries: env.llmMaxRetries,
+        googleTimeoutMs: env.googleTimeoutMs,
         cache: cacheStats(),
       },
     });

@@ -13,14 +13,14 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: cortex
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cortex_dev_password}
-      POSTGRES_DB: cortex
+      POSTGRES_USER: ai_secretary
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ai_secretary_dev_password}
+      POSTGRES_DB: ai_secretary
     volumes:
       - db-data:/var/lib/postgresql/data
     # The app must not start migrating before Postgres accepts connections.
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U cortex -d cortex"]
+      test: ["CMD-SHELL", "pg_isready -U ai_secretary -d ai_secretary"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -40,7 +40,7 @@ services:
       PORT: 4000
       SERVE_WEB: "true"
 
-      DATABASE_URL: postgresql://cortex:${POSTGRES_PASSWORD:-cortex_dev_password}@db:5432/cortex
+      DATABASE_URL: postgresql://ai_secretary:${POSTGRES_PASSWORD:-ai_secretary_dev_password}@db:5432/ai_secretary
 
       # One origin serves both the API and the UI, so these are the same host.
       APP_URL: ${APP_URL:-http://localhost:4000}

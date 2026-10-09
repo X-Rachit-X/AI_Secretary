@@ -187,7 +187,18 @@ export type GatewayInfo = {
   fallbackProvider: string | null;
   timeoutMs: number;
   maxRetries: number;
-  cache: { entries: number; maxEntries: number };
+  googleTimeoutMs: number;
+  cache: {
+    entries: number;
+    maxEntries: number;
+    hits: number;
+    misses: number;
+    evictions: number;
+    /** null when nothing has been looked up yet — not the same as 0%. */
+    hitRate: number | null;
+    ttlMs: number;
+    cacheableRoles: string[];
+  };
 };
 
 /** The live guardrail policy, read from the server so the UI cannot drift. */

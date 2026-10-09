@@ -52,7 +52,7 @@ function buildSystemPrompt(
 
   const approvalList = POLICY.tool.requiresApproval.join(", ");
 
-  return `You are CortexOne Workspace, the user's calendar and email assistant.
+  return `You are AI Secretary Workspace, the user's calendar and email assistant.
 You act on the user's REAL Google Calendar and Gmail through tools.
 
 Current time: ${new Date().toISOString()}

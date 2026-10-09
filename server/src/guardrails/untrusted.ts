@@ -32,7 +32,7 @@
  */
 
 /** Random enough that content cannot close the block by guessing the marker. */
-const FENCE = "cortex-untrusted-7f3a9c";
+const FENCE = "secretary-untrusted-7f3a9c";
 
 /**
  * Wrap third-party content so the model sees where it starts and stops.

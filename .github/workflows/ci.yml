@@ -57,7 +57,7 @@ jobs:
         image: postgres:16-alpine
         env:
           POSTGRES_PASSWORD: ci
-          POSTGRES_DB: cortex
+          POSTGRES_DB: ai_secretary
         ports:
           - 5432:5432
         options: >-
@@ -67,7 +67,7 @@ jobs:
           --health-retries 10
 
     env:
-      DATABASE_URL: postgresql://postgres:ci@localhost:5432/cortex
+      DATABASE_URL: postgresql://postgres:ci@localhost:5432/ai_secretary
       SHADOW_DATABASE_URL: postgresql://postgres:ci@localhost:5432/shadow
 
     steps:

@@ -39,7 +39,7 @@ export default function Login() {
           <div className="mx-auto mb-4 grid size-14 place-items-center rounded-2xl bg-brand">
             <Sparkles size={26} className="text-white" />
           </div>
-          <h1 className="text-2xl font-semibold">CortexOne</h1>
+          <h1 className="text-2xl font-semibold">AI Secretary</h1>
           <p className="mt-1.5 text-sm text-muted">
             One assistant for your work, your calendar and your inbox.
           </p>

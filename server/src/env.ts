@@ -59,6 +59,15 @@ export const env = {
   /** Retries on transient failures (429, 5xx) before the fallback is tried. */
   llmMaxRetries: Number(optional("LLM_MAX_RETRIES", "2")),
 
+  /**
+   * Hard deadline on a single Google Calendar or Gmail request.
+   *
+   * The gateway bounds model calls; this bounds tool calls. Without it a hung
+   * Google request has no ceiling at all, because it sits inside a tool where
+   * nothing else is watching the clock.
+   */
+  googleTimeoutMs: Number(optional("GOOGLE_TIMEOUT_MS", "20000")),
+
   google: {
     apiKey: optional("GOOGLE_API_KEY"),
     chatModel: optional("GOOGLE_CHAT_MODEL", "gemini-2.5-flash"),

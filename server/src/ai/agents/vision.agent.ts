@@ -17,7 +17,7 @@ import type { GraphStateType } from "../state.js";
  * publicly reachable URL for a file that was uploaded a second ago.
  */
 
-const SYSTEM = `You are CortexOne Vision.
+const SYSTEM = `You are AI Secretary Vision.
 
 Rules:
 - Describe only what is actually in the image. Never invent detail.

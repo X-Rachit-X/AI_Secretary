@@ -38,7 +38,7 @@ import {
  * So:
  *   - mail and calendar listings come back wrapped as untrusted content
  *   - send_mail and cancel_meeting PROPOSE; the user approves them in the
- *     CortexOne UI before anything is sent or cancelled
+ *     AI Secretary UI before anything is sent or cancelled
  *
  * That second point has a consequence worth stating plainly: an MCP host
  * cannot send mail on its own. It can draft and propose, and the human
@@ -116,7 +116,7 @@ export function registerCortexTools(server: McpServer, userId: string) {
 
   server.tool(
     "cancel_meeting",
-    "PROPOSE cancelling a calendar event. This does not cancel it — the user must approve in CortexOne first. Returns an approval id and a summary to show them.",
+    "PROPOSE cancelling a calendar event. This does not cancel it — the user must approve in AI Secretary first. Returns an approval id and a summary to show them.",
     { eventId: z.string().min(1) },
     async ({ eventId }) =>
       guard(async () =>
@@ -181,7 +181,7 @@ export function registerCortexTools(server: McpServer, userId: string) {
 
   server.tool(
     "send_mail",
-    "PROPOSE sending an email from the user's Gmail. This does not send it — the user must approve in CortexOne first. Returns an approval id and a summary to show them.",
+    "PROPOSE sending an email from the user's Gmail. This does not send it — the user must approve in AI Secretary first. Returns an approval id and a summary to show them.",
     {
       to: z.array(z.string()).min(1),
       subject: z.string().min(1),
@@ -197,7 +197,7 @@ export function registerCortexTools(server: McpServer, userId: string) {
   // ── Notifications ───────────────────────────────────────────────────────
   server.tool(
     "create_reminder",
-    "Add a notification to the user's CortexOne notification bell.",
+    "Add a notification to the user's AI Secretary notification bell.",
     {
       title: z.string().min(1),
       body: z.string().optional(),
@@ -211,7 +211,7 @@ export function registerCortexTools(server: McpServer, userId: string) {
 
   server.tool(
     "list_notifications",
-    "List the user's recent CortexOne notifications.",
+    "List the user's recent AI Secretary notifications.",
     { unreadOnly: z.boolean().optional() },
     async ({ unreadOnly }) =>
       guard(() => listNotifications({ userId, unreadOnly, limit: 20 })),
@@ -221,7 +221,7 @@ export function registerCortexTools(server: McpServer, userId: string) {
 }
 
 export function buildMcpServer(userId: string) {
-  const server = new McpServer({ name: "cortex-one", version: "1.1.0" });
+  const server = new McpServer({ name: "ai-secretary", version: "1.1.0" });
   registerCortexTools(server, userId);
   return server;
 }

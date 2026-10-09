@@ -12,17 +12,17 @@ import { buildMcpServer } from "./mcp.tools.js";
  *
  *   {
  *     "mcpServers": {
- *       "cortex-one": {
+ *       "ai-secretary": {
  *         "command": "npx",
  *         "args": ["tsx", "src/mcp/stdio.ts"],
- *         "cwd": "<absolute path to>/cortex-one/server",
- *         "env": { "CORTEX_USER_EMAIL": "you@example.com" }
+ *         "cwd": "<absolute path to>/ai-secretary/server",
+ *         "env": { "SECRETARY_USER_EMAIL": "you@example.com" }
  *       }
  *     }
  *   }
  *
  * There is no OAuth round trip here: a stdio server runs on the user's own
- * machine with no browser. It identifies the user by CORTEX_USER_EMAIL, which
+ * machine with no browser. It identifies the user by SECRETARY_USER_EMAIL, which
  * must match an account that has already signed in through the web app, so the
  * Google tokens are in the database. The HTTP transport in http.ts is the one
  * to use for anything remote.
@@ -32,14 +32,14 @@ import { buildMcpServer } from "./mcp.tools.js";
  */
 
 async function resolveUserId() {
-  const email = process.env.CORTEX_USER_EMAIL;
+  const email = process.env.SECRETARY_USER_EMAIL;
 
   if (email) {
     const user = await prisma.user.findUnique({ where: { email } });
 
     if (!user) {
       throw new Error(
-        `No CortexOne account found for ${email}. Sign in through the web app first.`,
+        `No AI Secretary account found for ${email}. Sign in through the web app first.`,
       );
     }
 
@@ -54,12 +54,12 @@ async function resolveUserId() {
 
   if (users.length === 0) {
     throw new Error(
-      "No CortexOne accounts exist yet. Start the app and sign in with Google first.",
+      "No AI Secretary accounts exist yet. Start the app and sign in with Google first.",
     );
   }
 
   throw new Error(
-    "Several accounts exist. Set CORTEX_USER_EMAIL to pick one.",
+    "Several accounts exist. Set SECRETARY_USER_EMAIL to pick one.",
   );
 }
 
@@ -71,7 +71,7 @@ async function main() {
 
   await server.connect(transport);
 
-  console.error("[mcp] cortex-one stdio server ready");
+  console.error("[mcp] ai-secretary stdio server ready");
 }
 
 main().catch((error) => {

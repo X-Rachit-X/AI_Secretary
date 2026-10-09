@@ -51,12 +51,34 @@ async function authFor(userId: string): Promise<OAuth2Client> {
   return client;
 }
 
+/**
+ * Every Google request gets a hard deadline.
+ *
+ * Without this there is no ceiling on a turn. The gateway caps how long a
+ * MODEL call may take, but a hung `events.list` sits inside a tool call where
+ * nothing is watching: the SSE stream stays open, the user's credits are
+ * already spent, and the request only ends when the socket eventually dies.
+ *
+ * googleapis accepts per-client request options and forwards them to its HTTP
+ * layer, so setting it here covers every call in calendar.ts and gmail.ts at
+ * once — which is the whole reason those files go through this factory.
+ */
+const GOOGLE_TIMEOUT_MS = env.googleTimeoutMs;
+
 export async function calendarFor(userId: string) {
-  return google.calendar({ version: "v3", auth: await authFor(userId) });
+  return google.calendar({
+    version: "v3",
+    auth: await authFor(userId),
+    timeout: GOOGLE_TIMEOUT_MS,
+  });
 }
 
 export async function gmailFor(userId: string) {
-  return google.gmail({ version: "v1", auth: await authFor(userId) });
+  return google.gmail({
+    version: "v1",
+    auth: await authFor(userId),
+    timeout: GOOGLE_TIMEOUT_MS,
+  });
 }
 
 /** Used by the UI to show "Connected" without making a Google call. */

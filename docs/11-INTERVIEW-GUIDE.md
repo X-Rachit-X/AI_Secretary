@@ -453,4 +453,4 @@ When asked *"anything you want to add?"*:
 
 ---
 
-[← Deployment](10-DEPLOYMENT.md) · [Index](README.md)
+[← Deployment](10-DEPLOYMENT.md) · [Index](README.md) · [Observability →](12-OBSERVABILITY.md)

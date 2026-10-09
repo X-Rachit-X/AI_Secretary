@@ -1,19 +1,26 @@
 # 3. Architecture
 
-How CortexOne is put together, and why each decision was made.
+How AI Secretary is put together, and why each decision was made.
 
 ---
 
 ## 3.1 What this project is
 
-Two earlier projects, merged:
+A TypeScript multi-agent assistant that acts on a real Google account.
 
-| Project | What it had | What survived |
-|---|---|---|
-| **cortex-ai** | LangGraph supervisor, 8 agents (chat, search, coding, pdf, ppt, image, vision, pdf-RAG), credits, rate limits, artifacts | The whole agent system, redesigned in TypeScript |
-| **agentic-calendar-assistant** | Google Calendar tools, an MCP server, streaming chat, working memory | Calendar, MCP, SSE streaming, durable preferences |
+| | |
+|---|---|
+| **Shape** | one Express process, one database, one folder of generated files |
+| **Agents** | 9 — eight answer in a single pass, one is a tool-using loop |
+| **Tools** | 16 Google Calendar, Gmail and notification tools |
+| **Safety** | four guardrail layers; irreversible actions need human approval |
+| **Quality** | 44 offline eval cases that run with no API key |
+| **Interop** | the same tools exposed over MCP, with the same gate |
 
-Plus what neither had: **Gmail** and **notifications**.
+The design question running through the whole thing: **a language model is a
+text predictor, so how do you let it act on someone's real inbox without
+letting it be talked into something?** Most of the architecture below is an
+answer to that.
 
 ## 3.2 The shape of it
 
@@ -61,25 +68,29 @@ graph TB
     HOST["Claude Desktop / Cursor"] -.->|"MCP"| MCP
 ```
 
-**One process.** The original cortex-ai ran five services behind a gateway (auth, chat, billing, agent, gateway) with Redis, MongoDB, Qdrant and S3 behind them. That is a sensible shape for a team deploying independently; it is a bad shape for one person trying to understand a system. Everything here is one Express app, one database and one folder of files.
+**One process.** Five services behind a gateway, with Redis, MongoDB, a vector database and object storage behind them, is a sensible shape for a team that needs to deploy pieces independently. It is a bad shape for one person trying to understand a system, and these pieces all scale with the same traffic. Everything here is one Express app, one database and one folder of files.
 
-## 3.3 What was removed, and what replaced it
+## 3.3 The infrastructure that is not here
 
-| Original | Replaced by | Why |
-|---|---|---|
-| Firebase auth + Descope | Google OAuth 2.0 directly | One consent screen grants sign-in *and* Calendar *and* Gmail. Two auth vendors became zero. |
-| Redis sessions | Signed JWT in an httpOnly cookie | No server to run. The token carries the user id; the secret verifies it. |
-| Redis chat cache | Nothing | SQLite on the same machine is already sub-millisecond. The cache was pure complexity. |
-| Redis rate limiting | In-memory `Map` | Single process, so a shared store buys nothing. Swap for Redis if you ever run replicas. |
-| MongoDB + Mongoose | SQLite + Prisma | Zero install, typed queries, one `schema.prisma` to read. |
-| Qdrant vector DB | `ai/vector-store.ts`, ~100 lines | A document you throw away after one question does not need a database. |
-| AWS S3 + presigned URLs | `storage/` on disk + `/api/files/:id` | No AWS account, and links in old transcripts never expire. |
-| Razorpay billing | Credit wallet only | The wallet mechanics are the interesting part; payments need a merchant account. `grantCredits()` is the hook if you add one. |
-| Nothing (new) | Four-layer guardrails | The agent reads attacker-controlled email. See [06-GUARDRAILS](06-GUARDRAILS.md). |
-| Nothing (new) | LLM gateway | Retry, timeout, fallback, cache and cost accounting in one place. |
-| Nothing (new) | Eval harness | 44 offline cases that run with no API key. See [07-EVALS](07-EVALS.md). |
-| Mastra agent framework | LangGraph `createReactAgent` | One agent framework instead of two. |
-| Next.js frontend | Vite + React | No SSR needed for an authenticated single-page app; Vite starts in under a second. |
+Each row is a component this project could plausibly have, does not, and why.
+Being able to defend an absence is as important as defending a choice.
+
+| Not used | Used instead | Why | Revisit when |
+|---|---|---|---|
+| Redis for sessions | signed JWT in an httpOnly cookie | no server to run; the secret verifies the token, so no lookup per request | you need per-token revocation |
+| Redis for caching | in-process `Map` in the gateway | one process, so a shared store buys nothing | you run more than one instance |
+| Redis for rate limits | in-process `Map` keyed by user+agent | same reason; `checkRateLimit()` keeps its signature either way | N instances means N× the intended limit |
+| A vector database | `ai/vector-store.ts`, ~100 lines of cosine similarity | the index is built for one question and discarded; a linear scan over a few hundred chunks is microseconds | document Q&A becomes a durable, multi-document knowledge base |
+| S3 + presigned URLs | `storage/` on disk, served by `/api/files/:id` | no cloud account, and links in old transcripts never expire | you run on more than one host |
+| A second auth vendor | one Google OAuth client | sign-in *is* the Calendar and Gmail grant — one consent, one token set | you need non-Google sign-in |
+| MongoDB | SQLite in dev, Postgres in prod, via Prisma | typed queries, one schema to read, zero local install | — |
+| A separate API gateway | the Express app itself | nothing to route between; one process has one front door | you split the services |
+| Microservices | one modular monolith | every piece scales with the same traffic, so independence buys nothing and costs readability | a component develops its own scaling profile |
+| An agent framework on top of LangGraph | LangGraph directly | one abstraction is enough; two means debugging through both | — |
+| A tracing SDK | a `Trace` table and two queries | the questions are "what did it cost" and "which guardrail fired", both answerable in SQL | you need distributed traces across services |
+
+The full write-up, with the trade-off each one carries, is in
+[13-DECISIONS.md](13-DECISIONS.md).
 
 ## 3.4 The agent graph
 

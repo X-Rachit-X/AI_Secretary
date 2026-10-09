@@ -67,7 +67,7 @@ async function main() {
   const selected = SUITES.filter((suite) => live || suite.kind === "offline");
 
   console.log("");
-  console.log(`${BOLD}CortexOne evals${RESET}`);
+  console.log(`${BOLD}AI Secretary evals${RESET}`);
   console.log(
     `${DIM}${selected.length} suites · ${live ? "offline + live" : "offline only (pass --live to include model calls)"}${RESET}`,
   );

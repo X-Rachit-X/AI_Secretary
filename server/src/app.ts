@@ -80,7 +80,7 @@ app.get("/health", async (_req, res) => {
 
     res.json({
       status: "ok",
-      service: "cortex-one",
+      service: "ai-secretary",
       database: "up",
       llmProvider: env.llmProvider,
       llmFallback: env.llmFallbackProvider ?? "none",

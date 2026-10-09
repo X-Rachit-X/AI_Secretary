@@ -2,7 +2,12 @@ import { createHash } from "node:crypto";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import type { BaseMessage } from "@langchain/core/messages";
 import { AIMessage } from "@langchain/core/messages";
-import { getModel, getFallbackModel, modelIdFor, type ModelRole } from "./models.js";
+import {
+  getModel,
+  getFallbackModel,
+  modelIdFor,
+  type ModelRole,
+} from "./models.js";
 import { estimateCost } from "./pricing.js";
 import { env } from "../env.js";
 
@@ -89,25 +94,66 @@ type CacheEntry = { text: string; expiresAt: number };
 
 const cache = new Map<string, CacheEntry>();
 
+/**
+ * Hit/miss/eviction counters, surfaced on the Insights page.
+ *
+ * A cache with no hit rate is a cache nobody can tune: you cannot tell a
+ * working cache from a cache that never hits, and both look identical from
+ * the outside.
+ */
+const cacheStats_ = { hits: 0, misses: 0, evictions: 0 };
+
 function cacheKey(role: ModelRole, messages: BaseMessage[] | string) {
   const payload =
     typeof messages === "string"
       ? messages
       : messages.map((m) => `${m.getType()}:${String(m.content)}`).join("\u0000");
 
-  return `${role}:${createHash("sha256").update(payload).digest("hex")}`;
+  /**
+   * The key identifies everything that can change the answer, not just the
+   * input: role, provider and model id.
+   *
+   * "temperature is 0" is NOT on its own a sufficient reason to cache. A
+   * deterministic model is only deterministic for a FIXED model — switch
+   * provider or bump the model id and the same prompt can legitimately produce
+   * a different answer. Leaving those out of the key is safe today only
+   * because this cache is in-process and provider config cannot change without
+   * a restart (which empties it). Including them makes that an explicit
+   * guarantee rather than a lucky accident, and is what makes it safe to move
+   * this cache to Redis later.
+   *
+   * Deliberately NOT in the key: the user id. Cacheable roles return a bounded
+   * label from a fixed vocabulary (the router returns one agent name), never
+   * user content, so sharing a hit between users leaks nothing. Any role that
+   * returned user-specific text would have to be keyed per user — which is
+   * exactly why CACHEABLE_ROLES is a short, explicit allowlist.
+   */
+  const fingerprint = [
+    role,
+    env.llmProvider,
+    modelIdFor(role),
+    createHash("sha256").update(payload).digest("hex"),
+  ].join("|");
+
+  return fingerprint;
 }
 
 function readCache(key: string): string | null {
   const entry = cache.get(key);
 
-  if (!entry) return null;
-
-  if (entry.expiresAt <= Date.now()) {
-    cache.delete(key);
+  if (!entry) {
+    cacheStats_.misses += 1;
     return null;
   }
 
+  if (entry.expiresAt <= Date.now()) {
+    cache.delete(key);
+    cacheStats_.evictions += 1;
+    cacheStats_.misses += 1;
+    return null;
+  }
+
+  cacheStats_.hits += 1;
   return entry.text;
 }
 
@@ -116,7 +162,10 @@ function writeCache(key: string, text: string) {
   // insertion order, so the first key is the oldest.
   if (cache.size >= CACHE_MAX_ENTRIES) {
     const oldest = cache.keys().next().value;
-    if (oldest) cache.delete(oldest);
+    if (oldest) {
+      cache.delete(oldest);
+      cacheStats_.evictions += 1;
+    }
   }
 
   cache.set(key, { text, expiresAt: Date.now() + CACHE_TTL_MS });
@@ -322,5 +371,18 @@ export async function invokeModel(
 
 /** Exposed so the Insights page can show how well the router cache is doing. */
 export function cacheStats() {
-  return { entries: cache.size, maxEntries: CACHE_MAX_ENTRIES };
+  const lookups = cacheStats_.hits + cacheStats_.misses;
+
+  return {
+    entries: cache.size,
+    maxEntries: CACHE_MAX_ENTRIES,
+    hits: cacheStats_.hits,
+    misses: cacheStats_.misses,
+    evictions: cacheStats_.evictions,
+    // null rather than 0 when nothing has been looked up yet: "no data" and
+    // "0% hit rate" mean very different things.
+    hitRate: lookups === 0 ? null : cacheStats_.hits / lookups,
+    ttlMs: CACHE_TTL_MS,
+    cacheableRoles: CACHEABLE_ROLES,
+  };
 }

@@ -1,4 +1,4 @@
-# CortexOne
+# AI Secretary
 
 One multi-agent assistant that chats, searches the web, writes code, generates
 PDFs and slide decks, reads images and documents — and works with your real
@@ -113,7 +113,7 @@ graph TB
         MCP["mcp/"]
     end
 
-    DB[("SQLite")]
+    DB[("SQLite dev<br/>Postgres prod")]
     FILES[("storage/")]
     LLM["LLM provider"]
     GAPI["Google Calendar + Gmail"]
@@ -146,7 +146,7 @@ and every run is bracketed by guardrails and recorded as a trace.
 
 ## Documentation
 
-Eleven documents in reading order. Each links to the next — start at the top and
+Fourteen documents in reading order. Each links to the next — start at the top and
 keep going. Full index: [docs/README.md](docs/README.md).
 
 | # | Document | What you get |
@@ -162,6 +162,8 @@ keep going. Full index: [docs/README.md](docs/README.md).
 | 09 | [Build order](docs/09-BUILD-ORDER.md) | type it out yourself, 16 checkpoints |
 | 10 | [Deployment](docs/10-DEPLOYMENT.md) | Docker, Postgres, four hosting options, HTTPS, CI |
 | 11 | [Interview guide](docs/11-INTERVIEW-GUIDE.md) | the questions you will be asked, and how to answer them |
+| 12 | [Observability](docs/12-OBSERVABILITY.md) | what a run records, the metrics, what is **not** logged |
+| 13 | [Decisions](docs/13-DECISIONS.md) | 15 architecture decisions with trade-offs and "revisit when" |
 
 **Shortest useful path:** [01 Overview](docs/01-OVERVIEW.md) →
 [02 Concepts](docs/02-CONCEPTS.md) → open
@@ -176,8 +178,8 @@ agent system fits in your head from there.
 ## Layout
 
 ```
-cortex-one/
-├── docs/                  eleven guides
+ai-secretary/
+├── docs/                  fourteen guides
 ├── server/
 │   ├── prisma/            schema.prisma — 9 models (SQLite, edit this)
 │   │   └── postgres/      generated Postgres schema + committed migrations
@@ -275,14 +277,17 @@ switched off. It found three real bugs on its first run; they are written up in
 
 ---
 
-## Built from
+## Design notes
 
-Two earlier projects merged into one:
+A few choices worth knowing about, and the reasoning behind each:
 
-- **cortex-ai** — the LangGraph supervisor, the eight content agents, credits and artifacts
-- **agentic-calendar-assistant** — Google Calendar tools, MCP, SSE streaming, working memory
+| Choice | Why |
+|---|---|
+| **One process, not microservices** | the pieces all scale with the same traffic, so splitting them buys deployment independence nobody needs here — and costs a reader the ability to follow a request end to end |
+| **No Redis** | the rate limiter and the router cache are per-process and correct for one instance. [13-DECISIONS](docs/13-DECISIONS.md) records exactly when that stops being true |
+| **No vector database** | document Q&A embeds one PDF, answers one question and throws the index away. A linear scan over a few hundred chunks is microseconds |
+| **Local file storage** | generated PDFs are served by the app, so links in old conversations never expire. `lib/storage.ts` is the single file to rewrite for S3 |
+| **SQLite in dev, Postgres in prod** | zero install locally; one generated schema and a committed migration for the container |
 
-Plus Gmail and notifications, which neither had. Along the way the two auth
-vendors, five microservices, Redis, MongoDB, Qdrant and S3 became one process,
-one database and one folder. See
-[03-ARCHITECTURE §3.3](docs/03-ARCHITECTURE.md).
+Every one of these is written up with its trade-off and its "revisit when…"
+trigger in [13-DECISIONS.md](docs/13-DECISIONS.md).

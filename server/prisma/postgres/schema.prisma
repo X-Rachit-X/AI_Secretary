@@ -2,7 +2,7 @@
 // Do not edit by hand: change ../schema.prisma, then run `npm run db:pg:sync`.
 // Production (the Docker image) builds and migrates against this file.
 
-// CortexOne data model.
+// AI Secretary data model.
 //
 // SQLite keeps local setup to zero steps. Production runs on Postgres using
 // postgres/schema.prisma, which is GENERATED from this file — after editing a
