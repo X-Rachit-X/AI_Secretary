@@ -376,6 +376,7 @@ without it.
 | `LLM_FALLBACK_PROVIDER` | no | empty | **Set it.** Without a fallback, one provider outage is a total outage. Must differ from `LLM_PROVIDER`. |
 | `LLM_TIMEOUT_MS` | no | `60000` | Ceiling on one model call, so a hung provider cannot stall a request and hold the user's credits. |
 | `LLM_MAX_RETRIES` | no | `2` | Retries on transient failures (429, 5xx) before the fallback is tried. |
+| `GOOGLE_TIMEOUT_MS` | no | `20000` | Hard deadline on **one** Google Calendar or Gmail request. The gateway bounds model calls; this bounds tool calls. Without it a hung Google request has no ceiling, because it sits inside a tool where nothing watches the clock. |
 
 ### Google OAuth
 
@@ -390,6 +391,7 @@ without it.
 | Variable | Required | Default | What it does |
 |---|---|---|---|
 | `TAVILY_API_KEY` | no | — | Web search. Without it the search agent degrades to plain chat and says the answer may not be current. |
+| `ENABLE_SCHEDULER` | no | `true` | Run the reminder sweep in **this** process. Set `false` on web instances once you run more than one, and `true` on exactly one `npm run worker`. |
 | `REMINDER_CRON` | no | `*/5 * * * *` | How often the reminder sweep runs. |
 | `REMINDER_LEAD_MINUTES` | no | `15` | How far ahead of a meeting to create the reminder. |
 
@@ -780,6 +782,47 @@ location / {
 the original request was HTTPS, which the secure cookie depends on.
 
 ---
+
+### Background work: the cron, and when to split it out
+
+The reminder sweep is a `node-cron` timer **inside the web process** by default.
+That is correct for one instance and wrong for two, in a way worth knowing before
+you scale.
+
+```mermaid
+flowchart LR
+    subgraph ONE["One instance — the default"]
+        A["web: HTTP + cron"]
+    end
+    subgraph MANY["Several instances"]
+        B["web x N<br/>ENABLE_SCHEDULER=false"]
+        C["worker x 1<br/>npm run worker"]
+    end
+    ONE ==>|"when you scale"| MANY
+```
+
+| Problem | Why it happens | What to do |
+|---|---|---|
+| N instances run N sweeps | each web process has its own cron | `ENABLE_SCHEDULER=false` on web, one worker with it true |
+| Reminders stop when idle | hosts suspend containers with no traffic, which stops the cron | keep one machine awake, **or** drop the cron entirely and have an external scheduler hit `POST /api/notifications/sweep` |
+
+The duplicates are **safe** — `dedupeKey` means a repeat writes nothing — just
+wasteful of Google quota.
+
+```bash
+# web instances
+ENABLE_SCHEDULER=false npm start
+
+# exactly ONE worker
+ENABLE_SCHEDULER=true npm run worker
+```
+
+> ⚠️ **One worker replica, always.** Two reintroduces duplicate sweeps. It is
+> enforced by convention, not by a lock — see
+> [13-DECISIONS ADR 18](13-DECISIONS.md#adr-18-cron-in-process-with-a-worker-escape-hatch).
+
+On Fly, that is a second process group; on Railway and Render, a second service
+from the same image with the env var flipped and the start command changed.
 
 ## 10.9 Verify the deployment
 

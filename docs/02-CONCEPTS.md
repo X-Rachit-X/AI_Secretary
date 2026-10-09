@@ -12,7 +12,7 @@ twelve sections below, you can defend this codebase.
 | [2.2](#22-tool-calling-the-whole-trick) | Tool calling | how a text model causes side effects |
 | [2.3](#23-writing-a-tool-line-by-line) | Writing a tool | the code, annotated |
 | [2.4](#24-langgraph-state-nodes-edges) | LangGraph | state, nodes, edges, reducers |
-| [2.5](#25-the-supervisor-router-pattern) | Supervisor / router | choosing one agent of nine |
+| [2.5](#25-the-supervisor--router-pattern) | Supervisor / router | choosing one agent of nine |
 | [2.6](#26-the-react-loop) | The ReAct loop | multi-step work |
 | [2.7](#27-rag-retrieval-augmented-generation) | RAG | answering from a document |
 | [2.8](#28-mcp-the-model-context-protocol) | MCP | sharing tools with other apps |
@@ -20,6 +20,8 @@ twelve sections below, you can defend this codebase.
 | [2.10](#210-oauth-20-and-the-refresh-token) | OAuth 2.0 | acting for a real user |
 | [2.11](#211-prompt-injection-and-why-guardrails-are-shaped-this-way) | Prompt injection | the attack that shapes the design |
 | [2.12](#212-prompt-engineering-patterns-used-here) | Prompt patterns | the four that earn their keep |
+| [2.13](#213-caching-in-an-llm-app-the-six-layers) | Caching, all six layers | what is normally cached, and what we do |
+| [2.14](#214-multi-agent-plans) | Multi-agent plans | how one request runs two agents |
 
 ---
 
@@ -1356,7 +1358,262 @@ bullet exists because that happened.
 
 ---
 
-## 2.13 Two more worth knowing
+## 2.13 Caching in an LLM app: the six layers
+
+Worth knowing properly, because "we cache the router" is a thin answer and the
+real landscape has six distinct layers that behave very differently.
+
+```mermaid
+flowchart TD
+    A["1. Provider prompt cache<br/>the KV of a repeated prefix"] --> B["2. Exact-match response cache<br/>same input, same output"]
+    B --> C["3. Semantic cache<br/>similar input, reused output"]
+    C --> D["4. Embedding cache<br/>pure function, free to cache"]
+    D --> E["5. Tool-result cache<br/>short TTL on a slow read"]
+    E --> F["6. HTTP / CDN cache<br/>static assets"]
+
+    style B fill:#166534,color:#fff
+    style D fill:#166534,color:#fff
+    style F fill:#166534,color:#fff
+    style C fill:#7f1d1d,color:#fff
+```
+
+Green is what this project does. Red is what it deliberately does not.
+
+### 1. Provider prompt caching — not used here
+
+Providers can cache the **internal state (KV) of a long prefix** so a repeated
+system prompt is not recomputed. Anthropic calls it prompt caching, Gemini
+calls it context caching, OpenAI does it automatically on long prefixes.
+
+It cuts input-token cost (often ~90% on the cached part) and latency. It is not
+a response cache: the model still generates fresh output.
+
+**Why not here.** The workspace system prompt is around 1,500 tokens — below the
+minimum cacheable prefix on most providers — and it embeds
+`new Date().toISOString()` plus the user's stored preferences, so it differs on
+every call and between users. Making it cacheable would mean restructuring it
+into a static prefix plus a dynamic suffix.
+
+> 💡 That restructure is the single highest-value caching change available if
+> this scaled up, and knowing *why* it does not apply yet is a better answer
+> than having added it blindly.
+
+### 2. Exact-match response caching — used, for one role
+
+Hash the input, store the output, return it on an identical input.
+
+```ts
+// server/src/ai/gateway.ts
+const CACHEABLE_ROLES: ModelRole[] = ["router"];
+
+const fingerprint = [
+  role,
+  env.llmProvider,
+  modelIdFor(role),
+  createHash("sha256").update(payload).digest("hex"),
+].join("|");
+```
+
+Three things in that key are the whole lesson:
+
+**The provider and model id are in it.** *"Temperature is 0"* is **not** on its
+own a sufficient reason to cache. A deterministic model is only deterministic
+for a **fixed** model — switch provider or bump the model and the same prompt
+can legitimately produce a different answer. Leaving them out is safe only
+while the cache is in-process and config cannot change without a restart, and
+it becomes a real bug the moment the cache is shared.
+
+**The user id is deliberately absent.** Cacheable roles return a bounded label
+from a fixed vocabulary — the router returns one agent name — never user
+content. So a shared hit leaks nothing. Any role returning user-specific text
+would have to be keyed per user, which is exactly why `CACHEABLE_ROLES` is a
+short, explicit allowlist rather than "anything at temperature 0".
+
+**Only the router is on the list.** Caching a creative role would make the
+assistant repeat itself verbatim, which reads as broken.
+
+### 3. Semantic caching — deliberately not used
+
+Embed the query, and if it is close enough to a cached one, return that answer.
+
+**Why not.** The failure mode is silent and bad. *"Am I free at 4pm?"* and
+*"Am I free at 5pm?"* are nearly identical in embedding space and have
+different correct answers. A similarity threshold that is safe for general
+questions is unsafe for anything time- or identity-dependent, which is most of
+what this app does.
+
+It earns its place on high-volume, read-only FAQ traffic. Not here.
+
+### 4. Embedding caching — used, and the safest of all
+
+```ts
+// server/src/ai/embedding-cache.ts
+function keyFor(model: string, text: string) {
+  return `${model}|${createHash("sha256").update(text).digest("hex")}`;
+}
+```
+
+**An embedding is a pure function of (text, model).** Same inputs, same vector,
+always. So unlike a completion there is no correctness question — caching cannot
+change an answer, only skip paid work. That makes it the safest thing in the
+system to cache, and why it has no freshness TTL.
+
+It fixes a real gap: document Q&A built its index per request, so a second
+question about the same PDF re-embedded every chunk — hundreds of paid calls to
+produce byte-identical vectors.
+
+The model id is in the key because **switching embedding models produces vectors
+in a different space**. Mixing them would silently wreck retrieval: cosine
+similarity across two spaces is meaningless and nothing would error — you would
+just get bad chunks.
+
+Note also the `query:` prefix on `embedQuery`. Some providers use a different
+instruction for queries than for the passages being searched, so the two must
+never share an entry.
+
+### 5. Tool-result caching — not used
+
+You could cache `list_meetings` for 30 seconds. We do not: the calendar is the
+thing the user is asking about, and a stale answer about your own day is worse
+than a slow one. The Google calls are fast, and `check_busy` already returns
+intervals rather than content.
+
+Worth adding for a genuinely slow, genuinely stable read. There isn't one here.
+
+### 6. HTTP / CDN caching — used
+
+```ts
+// server/src/app.ts
+if (filePath.endsWith(".html")) {
+  res.setHeader("Cache-Control", "no-cache");
+} else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+  res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+}
+```
+
+Vite names assets with a content hash, so the name changes when the content
+does — safe to cache for a year. `index.html` *points at* those names, so it
+must never be cached or a deploy leaves browsers pinned to a deleted bundle.
+
+### The summary table
+
+| Layer | Used | Why / why not |
+|---|---|---|
+| Provider prompt cache | ✗ | prompt is short and has per-call dynamic parts |
+| Exact-match response | ✓ | router only, keyed on role + provider + model + input |
+| Semantic cache | ✗ | "free at 4pm" vs "5pm" are close in vector space, different answers |
+| Embedding cache | ✓ | pure function, so correctness is not at stake |
+| Tool results | ✗ | a stale calendar is worse than a slow one |
+| HTTP / CDN | ✓ | immutable hashed assets, `no-cache` on the shell |
+
+---
+
+## 2.14 Multi-agent plans
+
+The router returns an **ordered list** of agents, not one agent. This is worth
+understanding because it is the difference between a router and a supervisor.
+
+### The problem a single agent cannot solve
+
+> *"Research the latest on RAG and make a deck."*
+
+That needs `search` (the research) and then `ppt` (the deck). With one-agent
+routing you get a deck written from training data, or research with no deck.
+
+The first version had exactly one exception to the one-agent rule — a hardcoded
+`search → chat` edge, so a web search could become a cited answer. **That
+exception was the design telling on itself.**
+
+### The fix: a plan plus one rule
+
+```ts
+// server/src/ai/state.ts
+plan: Annotation<AgentName[]>({ reducer: (_p, next) => next, default: () => [] }),
+planStep: Annotation<number>({ reducer: (p, n) => (p ?? 0) + n, default: () => 0 }),
+```
+
+```ts
+// server/src/ai/graph.ts — the single routing rule
+export function nextInPlan(state: GraphStateType): AgentName | typeof END {
+  const plan = state.plan ?? [];
+  const step = state.planStep ?? 0;
+
+  if (step >= plan.length || step >= MAX_PLAN_STEPS) return END;
+
+  const next = plan[step];
+  return next && next in AGENT_NODES ? next : END;
+}
+```
+
+Applied from the router **and from every agent**:
+
+```ts
+for (const source of ["router", ...AGENT_NAMES] as const) {
+  builder.addConditionalEdges(source, nextInPlan, ROUTE_MAP);
+}
+```
+
+```mermaid
+flowchart LR
+    R["router<br/>plan = [search, ppt]"] --> N1{"nextInPlan<br/>step 0"}
+    N1 -->|"search"| S["search agent<br/>writes searchResults"]
+    S --> N2{"nextInPlan<br/>step 1"}
+    N2 -->|"ppt"| P["ppt agent<br/>reads searchResults"]
+    P --> N3{"nextInPlan<br/>step 2"}
+    N3 -->|"past end"| E(["END"])
+```
+
+**The special case disappeared.** `search → chat` is now just the plan
+`["search", "chat"]` — no edge dedicated to it. The graph went from "one edge
+per agent plus one exception" to **one edge shape everywhere**, and it gained a
+capability. That is the rare refactor that is both simpler and more powerful.
+
+### Agents stay unaware
+
+`planStep` is advanced by a wrapper in the graph, not by the agents:
+
+```ts
+function withPlanAdvance(agent: AgentFn): AgentFn {
+  return async (state) => ({ ...(await agent(state)), planStep: 1 });
+}
+```
+
+So all nine agent files remain plain `state -> partial state` functions that
+know nothing about plans. Adding a tenth needs no plan awareness at all.
+
+### Three rules keep a plan executable
+
+A model asked for a list will produce nonsense sometimes, so `parsePlan`
+enforces:
+
+| Rule | Why |
+|---|---|
+| de-duplicate | `chat -> chat` would waste a billed step |
+| a trailing `search` gets `chat` appended | search only gathers; something must write |
+| `search` followed by a non-consumer is corrected | `search -> image` is nonsense: image cannot read research |
+| capped at `MAX_PLAN_STEPS` (3) | every step is a billed agent run, so an unbounded plan is an unbounded bill |
+
+All four are asserted in
+[`router.eval.ts`](../server/src/evals/router.eval.ts), along with five cases
+that **walk a plan to completion** to prove it terminates — a plan that never
+reaches `END` would hang a real request.
+
+### What this is NOT
+
+It is not a re-planning supervisor that reconsiders after every step. That costs
+a model call per step and can loop. A plan decided **once**, capped, is
+predictable and cheap, and covers the combinations that actually come up.
+
+> 💡 The honest interview answer: *"It's a planner, not a re-planner. I chose
+> once-and-capped because the alternative is a model call per step plus loop
+> risk, for cases I don't have. If I needed dynamic replanning — retrying a
+> failed sub-step, or branching on a result — I'd add a supervisor node that
+> loops back, and I'd want the eval suite to show me the current one failing
+> first."*
+
+---
+
+## 2.15 Two more worth knowing
 
 ### Atomic operations instead of read-then-write
 
@@ -1415,7 +1672,7 @@ if (input.dedupeKey) {
 
 ---
 
-## 2.14 Next
+## 2.16 Next
 
 You now have the concepts. [**03-ARCHITECTURE**](03-ARCHITECTURE.md) shows how they
 are assembled, and every trade-off made along the way.

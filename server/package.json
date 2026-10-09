@@ -14,7 +14,9 @@
     "db:pg:sync": "node scripts/postgres-schema.mjs",
     "db:pg:migrate": "npm run db:pg:sync && prisma migrate dev --schema prisma/postgres/schema.prisma --skip-generate",
     "eval": "tsx src/evals/run.ts",
-    "eval:live": "tsx src/evals/run.ts --live --json"
+    "eval:live": "tsx src/evals/run.ts --live --json",
+    "worker": "tsx src/worker.ts",
+    "worker:prod": "node dist/worker.js"
   },
   "prisma": {
     "schema": "prisma/schema.prisma"

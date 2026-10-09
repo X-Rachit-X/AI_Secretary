@@ -6,6 +6,7 @@ import { ChatAnthropic } from "@langchain/anthropic";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { env, type LlmProvider } from "../env.js";
 import { AppError } from "../lib/errors.js";
+import { withEmbeddingCache } from "./embedding-cache.js";
 
 /**
  * The only place a model is constructed.
@@ -198,16 +199,22 @@ export function getFallbackModel(role: ModelRole): BaseChatModel | null {
  * tier, and embeddings are cheap enough that mixing providers (Gemini for
  * vectors, anything you like for chat) is a reasonable default.
  */
-let embeddingsCache: GoogleGenerativeAIEmbeddings | null = null;
+let embeddingsCache: ReturnType<typeof withEmbeddingCache> | null = null;
 
 export function getEmbeddings() {
   if (!env.google.apiKey) throw missingKey("GOOGLE_API_KEY");
 
   if (!embeddingsCache) {
-    embeddingsCache = new GoogleGenerativeAIEmbeddings({
-      apiKey: env.google.apiKey,
-      model: env.google.embeddingModel,
-    });
+    // Wrapped so identical chunks are embedded once per process. An embedding
+    // is a pure function of (text, model), so this cannot change a result —
+    // only skip paid work. See ai/embedding-cache.ts.
+    embeddingsCache = withEmbeddingCache(
+      new GoogleGenerativeAIEmbeddings({
+        apiKey: env.google.apiKey,
+        model: env.google.embeddingModel,
+      }),
+      env.google.embeddingModel,
+    );
   }
 
   return embeddingsCache;

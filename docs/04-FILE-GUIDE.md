@@ -55,7 +55,8 @@ ai-secretary/
 | **`env.ts`** | Reads and validates every environment variable once, exports a frozen `env` object | Nothing else touches `process.env`. A missing key fails loudly at boot, not as `undefined` halfway through an agent run. |
 | **`db.ts`** | The Prisma client singleton | Cached on `globalThis` because `tsx watch` re-imports modules on save, and a fresh client per reload leaks connections until SQLite refuses to open another. |
 | **`app.ts`** | Express app: CORS, JSON, cookies, the route table, the error handler | Separate from `index.ts` so a test can import the app without starting a listener or a cron job. |
-| **`index.ts`** | `listen()`, start the scheduler, handle SIGINT/SIGTERM | Prints a startup banner showing what is and is not configured. Half of all "why isn't this working" time goes on a missing key. |
+| **`worker.ts`** | The background worker as its own process: cron only, no HTTP | Needed past one instance, where every web process would otherwise run its own sweep. Refuses to start if `ENABLE_SCHEDULER` is false rather than idling silently. |
+| **`index.ts`** | `listen()`, start the scheduler (unless a worker owns it), handle SIGINT/SIGTERM | Prints a startup banner showing what is and is not configured. Half of all "why isn't this working" time goes on a missing key. |
 | **`prisma/schema.prisma`** | 9 models: User, GoogleAccount, Preference, Conversation, Message, Notification, StoredFile, PendingAction, Trace | Switch `provider` to `postgresql` and nothing else changes. |
 
 ### `lib/`
@@ -104,8 +105,8 @@ this way; this is what each file does.
 | **`types.ts`** | `Suite`, `CaseResult`, and the offline/live split |
 | **`guardrails.eval.ts`** | 26 cases. Includes 5 **false-positive guards** - inputs that must NOT trip a rule |
 | **`parsers.eval.ts`** | 14 cases. The deck and document parsers must *degrade*, not throw; plus vector-store edge cases |
-| **`router.eval.ts`** | 21 live cases for routing accuracy, and 4 offline ones for attachment routing |
-| **`run.ts`** | The runner. `npm run eval` for offline, `-- --live` to add model calls. Exit 1 on failure, so it gates CI |
+| **`router.eval.ts`** | 21 live routing-accuracy cases, 4 offline attachment cases, and **15 offline plan cases** — 10 for the parser rules and 5 that walk a plan to completion to prove it terminates |
+| **`run.ts`** | The runner, 5 suites. `npm run eval` for offline, `-- --live` to add model calls. Exit 1 on failure, so it gates CI |
 
 ---
 
@@ -117,7 +118,8 @@ this way; this is what each file does.
 | **`ai/pricing.ts`** | USD per million tokens, per model | Cost is computed in one place from provider-reported counts. An unlisted model costs 0, which shows up as a suspiciously free agent on Insights. |
 | **`ai/models.ts`** | `getModel(role)`, `getFallbackModel(role)`, `getEmbeddings()` | Agents ask by **role** (`"router"`, `"vision"`), never by provider. Temperature is 0 where output is parsed by code, warmer where it is prose for a human. Models are cached per role. |
 | **`ai/state.ts`** | The `GraphState` annotation | Read this first when you want to understand the graph. Every node reads it and returns a partial update. |
-| **`ai/router.node.ts`** | Picks one agent | Three stages, cheapest first — see [03-ARCHITECTURE §3.4](03-ARCHITECTURE.md#how-the-router-decides--three-stages-cheapest-first). Parses the first valid word from the reply, because models answer `"Search."` and `"agent: coding"` often enough that a bare match is unsafe. |
+| **`ai/router.node.ts`** | Returns an ordered **plan** of agents | Three stages, cheapest first — see [03-ARCHITECTURE §3.4](03-ARCHITECTURE.md#how-the-router-decides--three-stages-cheapest-first). Parses the first valid word from the reply, because models answer `"Search."` and `"agent: coding"` often enough that a bare match is unsafe. |
+| **`ai/embedding-cache.ts`** | Caches embeddings by content hash | An embedding is a pure function of (text, model), so caching cannot change a result — only skip paid work. Fixes doc Q&A re-embedding a PDF on every follow-up question. The model id is in the key because two embedding models produce vectors in **different spaces**, and mixing them wrecks retrieval silently. |
 | **`ai/graph.ts`** | Wires nodes and edges, compiles once | Compilation validates the wiring, so a typo in a destination fails at boot rather than mid-conversation. Also exports `AGENT_CATALOG`, which the UI picker reads — the list can never drift from the graph. |
 | **`ai/tools/context.ts`** | `ToolContext`, `tracked()`, `untrusted()` | Tools are built per run so they close over *this* turn's identity. `tracked()` returns tool errors as strings rather than throwing, so one failed call does not abort the ReAct loop. |
 | **`ai/vector-store.ts`** | ~100-line cosine-similarity vector store | LangChain v1 dropped `MemoryVectorStore`, and running Qdrant for one throwaway document is operations work for nothing. This is also the clearest possible explanation of what retrieval actually is. |

@@ -33,7 +33,12 @@ async function main() {
     console.log("");
   });
 
-  startScheduler();
+  // Off when a separate worker process owns the sweep (see worker.ts).
+  if (env.enableScheduler) {
+    startScheduler();
+  } else {
+    console.log("[scheduler] disabled here; expecting a separate worker");
+  }
 
   // Finish in-flight requests before exiting, and release the database handle
   // so SQLite does not leave a stale lock file behind.

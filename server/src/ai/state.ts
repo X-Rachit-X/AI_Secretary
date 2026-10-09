@@ -27,6 +27,17 @@ export type AgentName =
   | "docqa"
   | "workspace";
 
+/**
+ * Hard ceiling on plan length.
+ *
+ * Every step is a billed agent run, so an unbounded plan is an unbounded bill.
+ * Two covers every combination that has come up; three leaves headroom.
+ *
+ * Lives here rather than in graph.ts because the router needs it too, and
+ * state.ts imports neither — so there is no cycle.
+ */
+export const MAX_PLAN_STEPS = 3;
+
 export type UploadedFile = {
   path: string;
   mimetype: string;
@@ -101,10 +112,38 @@ export const GraphState = Annotation.Root({
    * "auto" on the way in (let the router decide), or a concrete agent when the
    * user picked one in the UI. The router node overwrites it with its answer,
    * so after the router runs this is always a real agent name.
+   *
+   * With a multi-step plan this holds the agent that produced the FINAL answer,
+   * which is what gets stored on the message and shown as the badge.
    */
   agent: Annotation<AgentName | "auto">({
     reducer: (_previous, next) => next,
     default: () => "auto",
+  }),
+
+  /**
+   * The ordered agents to run for this turn. Written once by the router.
+   *
+   * Most turns are a single agent, so this is usually one element. Some
+   * requests genuinely need two — "research the latest on X and make a deck"
+   * is `["search", "ppt"]` — and expressing that as a list is what lets the
+   * graph run them in order without a hardcoded edge per combination.
+   */
+  plan: Annotation<AgentName[]>({
+    reducer: (_previous, next) => next,
+    default: () => [],
+  }),
+
+  /**
+   * How many steps of the plan have finished.
+   *
+   * Incremented by the wrapper in graph.ts rather than by the agents, so the
+   * agents stay unaware that plans exist. The reducer SUMS, so a node returning
+   * `{ planStep: 1 }` advances by one regardless of where it is in the plan.
+   */
+  planStep: Annotation<number>({
+    reducer: (previous, next) => (previous ?? 0) + next,
+    default: () => 0,
   }),
 
   // ── outputs ───────────────────────────────────────────────────────────────

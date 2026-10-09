@@ -49,6 +49,27 @@ Rules:
 
 Topic: `;
 
+/**
+ * When a `search` step ran before this one, its results are in state. Feeding
+ * them in is the whole point of a ["search", "ppt"] plan — without this the
+ * deck would be written from training data and the research would be wasted.
+ *
+ * `searchResults` is `undefined` when no search ran and `""` when a search ran
+ * and found nothing, and neither should add an empty context block.
+ */
+function researchBlock(results: string | undefined) {
+  if (!results?.trim()) return "";
+
+  return `
+
+Use these web search results as the source of fact. They are more recent than
+your training data. Prefer them over what you remember, and do not invent
+figures that are not in them.
+
+${results}
+`;
+}
+
 function parseDeck(content: string, fallbackTitle: string): DeckSpec {
   const spec: DeckSpec = { title: fallbackTitle.slice(0, 100), slides: [] };
 
@@ -106,10 +127,10 @@ export async function pptAgent(state: GraphStateType) {
   return runBilled(state.userId, "ppt", async () => {
     state.onProgress?.("Outlining the deck");
 
-    const result = await invokeModel(PROMPT + state.prompt, {
-      role: "ppt",
-      meter: state.meter,
-    });
+    const result = await invokeModel(
+      PROMPT + state.prompt + researchBlock(state.searchResults),
+      { role: "ppt", meter: state.meter },
+    );
     const spec = parseDeck(String(result.content ?? ""), state.prompt);
 
     // Refund rather than hand back an empty deck.

@@ -258,6 +258,115 @@ more than the whole feature list.
 
 ## 11.5 Engineering questions
 
+### "Can one request use more than one agent?"
+
+**Yes, and the way it got there is the interesting part.**
+
+> "The router returns an ordered plan, not a single agent. `state.plan` is a
+> list and `state.planStep` tracks progress, and every node — the router and all
+> nine agents — uses the same conditional edge: *what's next in the plan?*
+>
+> So *'research the latest on RAG and make a deck'* becomes `["search", "ppt"]`,
+> and `chat`, `pdf`, `ppt` and `coding` all read `state.searchResults` so the
+> research actually gets used.
+>
+> The first version routed to one agent and sent every node to END — with one
+> hardcoded `search → chat` edge so a search could become a cited answer. That
+> exception was the design telling on itself. Generalising it to a list removed
+> the special case **and** added the capability: the graph went from one edge per
+> agent plus an exception to one edge shape everywhere."
+
+> 💡 That last point is the strongest thing to say: a refactor that made the code
+> *simpler* and *more capable* at the same time is rare, and interviewers notice
+> when you can name one.
+
+### "Is it a supervisor or a router?"
+
+Be precise — this is a real distinction and claiming the wrong one is a trap.
+
+> "It's a **planner**, not a re-planning supervisor. The plan is decided once,
+> capped at three steps, and executed in order. A true supervisor reconsiders
+> after every step.
+>
+> I chose once-and-capped deliberately: re-planning costs a model call per step
+> and can loop, for cases I don't have. If I needed to retry a failed sub-step,
+> branch on a result, or run agents in parallel, I'd add a supervisor node that
+> loops back — and I'd want the live eval suite to show me the current one
+> failing first, rather than assuming."
+
+### "What happens if the plan is nonsense?"
+
+> "Four parser rules, all eval-covered. Duplicates are dropped so `chat → chat`
+> can't waste a billed step. A trailing `search` gets a writer appended, because
+> search only gathers. `search → image` gets corrected, because image can't read
+> research. And it's capped at three, because every step is a billed agent run,
+> so an unbounded plan is an unbounded bill.
+>
+> There are also five cases that **walk a plan to completion** to prove it
+> terminates — a plan that never reaches END would hang a real request, and that
+> isn't the kind of thing you want to discover in production."
+
+### "What do you cache? What would you normally cache in an LLM app?"
+
+This is a good question to answer with the full landscape, not just your answer.
+
+> "Six layers normally, and I use three.
+>
+> **Provider prompt caching** caches the KV of a long repeated prefix — Anthropic
+> prompt caching, Gemini context caching. Big cost win on input tokens. I don't
+> use it: my system prompt is about 1,500 tokens, under most minimums, and it
+> embeds the current time and per-user preferences so it differs every call.
+> Restructuring it into a static prefix plus dynamic suffix is the highest-value
+> caching work left.
+>
+> **Exact-match response caching** — I do this, for the router only. The key is
+> `role | provider | modelId | hash(input)`. The important bit: *'temperature is
+> 0'* is **not** on its own a safe caching rule, because a deterministic model is
+> only deterministic for a *fixed* model. Switch provider and the same prompt can
+> legitimately differ.
+>
+> **Semantic caching** — deliberately not. *'Am I free at 4pm'* and *'at 5pm'*
+> are neighbours in embedding space with different correct answers. Silent wrong
+> answers are the worst failure mode available.
+>
+> **Embedding caching** — yes, and it's the safest of the lot, because an
+> embedding is a *pure function* of (text, model). Caching cannot change a
+> result, only skip paid work. It fixed a real gap: doc Q&A rebuilt its index per
+> request, so a second question re-embedded every chunk.
+>
+> **Tool-result caching** — no. The calendar is the thing being asked about; a
+> stale answer about your own day is worse than a slow one.
+>
+> **HTTP caching** — yes. Vite hashes asset names so they're immutable for a
+> year; `index.html` is `no-cache` because it points at those names."
+
+> 💡 Also know *why the user id is not in the cache key*: cacheable roles return
+> a bounded label from a fixed vocabulary, never user content, so a shared hit
+> leaks nothing. Any role returning user text would need per-user keying — which
+> is exactly why the allowlist is explicit rather than a predicate.
+
+### "Do you have background workers?"
+
+Answer the real question, which is about scaling.
+
+> "One scheduled job — the reminder sweep — and it's a `node-cron` timer in the
+> web process by default, not a queue. For one recurring idempotent job that
+> finishes in milliseconds, BullMQ would mean Redis plus a worker plus a
+> dashboard to run one function on a timer.
+>
+> But I know the two ways that breaks. N web instances run N sweeps — safe,
+> because `dedupeKey` means duplicates write nothing, but N× the Google quota.
+> And idle hosts suspend containers, which stops the cron, so reminders only fire
+> while someone's using the app — exactly backwards.
+>
+> So there's `worker.ts`: `ENABLE_SCHEDULER=false` on the web instances and one
+> `npm run worker` that runs the scheduler and nothing else. No HTTP server, so a
+> host scaling on request volume leaves it alone. It refuses to start if the flag
+> is false, rather than idling silently.
+>
+> One replica, enforced by convention. Two would reintroduce duplicate sweeps —
+> a distributed lock or a single-consumer queue is the next step up."
+
 ### "How do you know it still works after a change?"
 
 > "An eval suite, split deliberately into offline and live.
@@ -382,6 +491,8 @@ Five minutes, in this order. Each step shows a different thing.
 | 6 | Open **Insights** | cost per agent, p95 latency, guardrail counts |
 | 7 | Terminal: `npm run eval` | 44/44 in under a second |
 | 8 | *"Make a deck on RAG"* | tagged-text generation → real .pptx |
+| 9 | *"Research the latest on RAG and make a deck"* | **a two-agent plan** — watch the progress line say "Running search then ppt" |
+| 10 | Open **Insights** again | cache hit rate, embedding cache, tool timeout |
 
 If something breaks, say what you expected and what the fix would be. Diagnosing
 live is a better signal than a demo that works.
@@ -397,11 +508,13 @@ live is a better signal than a demo that works.
 | | |
 |---|---|
 | Source files | 90 (66 server, 24 web) |
-| Agents | 9 |
+| Agents | 9, plus plans of up to 3 |
 | Tools | 16 across 3 files |
 | MCP tools | 10 |
 | Guardrail layers | 4 — three advisory, one hard |
-| Offline eval cases | 44, ~40ms, no API key |
+| Cache layers used | 3 of 6 |
+| Max plan steps | 3 |
+| Offline eval cases | 59, ~40ms, no API key |
 | Live eval cases | 21 |
 | Bugs the evals found | 3 |
 | Credit cost | 1 chat → 10 image |
@@ -434,6 +547,12 @@ without thinking.
 
 5. *"The offline evals need no API key, which is the only reason they'll still be
    running in six months."*
+
+6. *"Generalising the one hardcoded `search → chat` edge into a plan removed a
+   special case and added multi-agent requests at the same time."*
+
+7. *"Embeddings are a pure function of (text, model), so that cache can't change
+   an answer — only skip paid work. That's why it's the one cache with no TTL."*
 
 ---
 

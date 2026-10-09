@@ -2,6 +2,7 @@ import { Router } from "express";
 import { currentUser, requireAuth } from "../auth/require-auth.js";
 import { getInsights, recentTraces } from "../services/trace.service.js";
 import { cacheStats } from "../ai/gateway.js";
+import { embeddingCacheStats } from "../ai/embedding-cache.js";
 import { POLICY } from "../guardrails/policy.js";
 import { env } from "../env.js";
 import { statusOf, toErrorBody } from "../lib/errors.js";
@@ -43,6 +44,7 @@ insightsRoutes.get("/", async (req, res) => {
         maxRetries: env.llmMaxRetries,
         googleTimeoutMs: env.googleTimeoutMs,
         cache: cacheStats(),
+        embeddingCache: embeddingCacheStats(),
       },
     });
   } catch (error) {

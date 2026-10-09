@@ -98,31 +98,64 @@ This is the core. One router decides; one agent runs.
 
 ```mermaid
 graph LR
-    START(["START"]) --> ROUTER{"router"}
+    START(["START"]) --> ROUTER["router<br/>writes state.plan"]
+    ROUTER --> NEXT{"nextInPlan()"}
 
-    ROUTER -->|"fresh info"| SEARCH["search"]
-    ROUTER -->|"general"| CHAT["chat"]
-    ROUTER -->|"build / review"| CODING["coding"]
-    ROUTER -->|"document"| PDF["pdf"]
-    ROUTER -->|"slides"| PPT["ppt"]
-    ROUTER -->|"picture"| IMAGE["image"]
-    ROUTER -->|"image upload"| VISION["vision"]
-    ROUTER -->|"pdf upload"| DOCQA["docqa"]
-    ROUTER -->|"calendar / mail"| WS["workspace"]
+    NEXT -->|"plan[step]"| SEARCH["search"]
+    NEXT --> CHAT["chat"]
+    NEXT --> CODING["coding"]
+    NEXT --> PDF["pdf"]
+    NEXT --> PPT["ppt"]
+    NEXT --> IMAGE["image"]
+    NEXT --> VISION["vision"]
+    NEXT --> DOCQA["docqa"]
+    NEXT --> WS["workspace"]
 
-    SEARCH -->|"results into state"| CHAT
+    SEARCH --> NEXT
+    CHAT --> NEXT
+    CODING --> NEXT
+    PDF --> NEXT
+    PPT --> NEXT
+    IMAGE --> NEXT
+    VISION --> NEXT
+    DOCQA --> NEXT
+    WS --> NEXT
 
-    CHAT --> END(["END"])
-    CODING --> END
-    PDF --> END
-    PPT --> END
-    IMAGE --> END
-    VISION --> END
-    DOCQA --> END
-    WS --> END
+    NEXT -->|"plan exhausted"| END(["END"])
+
+    style NEXT fill:#2563eb,color:#fff
 ```
 
-**One special edge.** `search` does not finish the turn. It fetches results, writes them into state, and hands off to `chat`, which writes the cited answer. That keeps citation style in one place and makes the search provider swappable.
+**The router returns a plan, not an agent.** `state.plan` is an ordered list and
+`state.planStep` tracks progress. Every node — the router and all nine agents —
+uses the same conditional edge: *"what is next in the plan?"*
+
+Most turns are one agent. Some need two:
+
+| Request | Plan |
+|---|---|
+| "what is a closure in js" | `["chat"]` |
+| "what's the latest Node version" | `["search", "chat"]` |
+| "research the latest on RAG and make a deck" | `["search", "ppt"]` |
+| "write a report on 2026 EV sales from current data" | `["search", "pdf"]` |
+
+**This replaced a special case with a rule.** The first version routed to one
+agent and sent every node to `END`, with one hardcoded `search → chat` edge so a
+search could become a cited answer — an exception that admitted the limitation.
+Now `search → chat` is just the plan `["search", "chat"]`, with no edge dedicated
+to it, and the graph has **one edge shape everywhere**.
+
+`chat`, `pdf`, `ppt` and `coding` all read `state.searchResults` when a search
+step ran before them, so the research is actually used rather than gathered and
+discarded.
+
+Three safety properties, all asserted in the eval suite:
+
+- a plan is **capped** at `MAX_PLAN_STEPS` (3), because every step is billed
+- a trailing `search` gets a writer appended, because search cannot answer
+- a plan naming an unknown node **ends the turn** rather than hanging the graph
+
+Full detail in [02-CONCEPTS §2.14](02-CONCEPTS.md#214-multi-agent-plans).
 
 ### How the router decides — three stages, cheapest first
 
@@ -386,7 +419,48 @@ sequenceDiagram
 
 `dedupeKey` is what makes it safe to run the sweep every five minutes. `meeting:<eventId>` is written once; later ticks that see the same meeting are no-ops.
 
-## 3.12 Security
+## 3.12 Background work
+
+One scheduled job: the reminder sweep. It is a `node-cron` timer, not a queue.
+
+```mermaid
+flowchart LR
+    subgraph D["Default: one instance"]
+        W1["web process<br/>HTTP + cron"] --> G1["Google"]
+    end
+
+    subgraph S["Scaled: ENABLE_SCHEDULER=false on web"]
+        W2["web x N<br/>HTTP only"]
+        K["worker x 1<br/>cron only"] --> G2["Google"]
+    end
+
+    D ==>|"npm run worker"| S
+```
+
+**Why a timer rather than a queue.** There is one recurring job, it is
+idempotent, and it takes milliseconds. BullMQ would mean Redis, a worker
+process and a dashboard to run one function on a schedule.
+
+**Two things break it at scale**, and both have a one-env-var answer:
+
+| Problem | Why | Fix |
+|---|---|---|
+| N instances run N sweeps | every web process has its own cron | `ENABLE_SCHEDULER=false` on web, one `npm run worker` |
+| Idle hosts suspend containers | Fly/Railway/Render stop a container with no traffic, stopping the cron | keep one machine awake, or hit `POST /api/notifications/sweep` from an external scheduler |
+
+The duplicate sweeps are **safe** either way — `dedupeKey` means a repeat writes
+nothing — just wasteful of Google quota.
+
+[`server/src/worker.ts`](../server/src/worker.ts) is the separate process: no
+HTTP server, cron only, and it refuses to start if `ENABLE_SCHEDULER` is false
+rather than idling silently.
+
+**What there is no background work for, and why:** document ingestion is
+synchronous because it is one PDF for one question; email sending is synchronous
+because the user is waiting on the approval they just granted. Both would move
+to a queue if they became bulk operations.
+
+## 3.13 Security
 
 | Concern | How it is handled |
 |---|---|
@@ -399,7 +473,7 @@ sequenceDiagram
 | Upload abuse | 20 MB cap, PDF and images only, deleted in a `finally` block |
 | Quota abuse | per-user per-agent rate limit, then the credit wallet |
 
-## 3.13 Guardrails: four layers, one of them hard
+## 3.14 Guardrails: four layers, one of them hard
 
 The agent reads the user's email, which means **anyone on the internet can put
 text into its context**. That single fact shapes the safety design.
@@ -422,14 +496,14 @@ MCP gets the same gate — otherwise it would be a hole straight through the pol
 
 Full detail in [06-GUARDRAILS.md](06-GUARDRAILS.md).
 
-## 3.14 The LLM gateway
+## 3.15 The LLM gateway
 
 Every model call goes through `invokeModel()` in
 [`ai/gateway.ts`](../server/src/ai/gateway.ts) rather than `model.invoke()`:
 
 | | |
 |---|---|
-| **cache** | temperature-0 roles only (the router) |
+| **cache** | an explicit allowlist, today only `router`; keyed on role + provider + model |
 | **timeout** | a hung provider cannot hold a request open |
 | **retry** | transient errors only, exponential backoff with jitter |
 | **fallback** | a second provider when the first keeps failing |
@@ -438,7 +512,7 @@ Every model call goes through `invokeModel()` in
 `LLM_PROVIDER=openrouter` uses a hosted gateway instead; the in-process one still
 applies on top.
 
-## 3.15 Observability
+## 3.16 Observability
 
 One `Trace` row per run — agent, latency, tokens, cost, guardrail flags — and an
 **Insights** page that answers three questions an agent app cannot answer by
@@ -447,7 +521,7 @@ actually firing.
 
 A guardrail nobody can see is a guardrail nobody will maintain.
 
-## 3.16 Where to go next
+## 3.17 Where to go next
 
 - [04-FILE-GUIDE.md](04-FILE-GUIDE.md) — what every file does
 - [09-BUILD-ORDER.md](09-BUILD-ORDER.md) — the order to write them in
@@ -455,6 +529,8 @@ A guardrail nobody can see is a guardrail nobody will maintain.
 - [08-SETUP.md](08-SETUP.md) — keys, OAuth and running it
 - [06-GUARDRAILS.md](06-GUARDRAILS.md) — the four layers, and the attack that shapes them
 - [07-EVALS.md](07-EVALS.md) — the eval harness, the gateway and observability
+- [12-OBSERVABILITY.md](12-OBSERVABILITY.md) — traces, metrics, and what is not logged
+- [13-DECISIONS.md](13-DECISIONS.md) — every architectural decision with its trade-off
 
 <!-- nav -->
 

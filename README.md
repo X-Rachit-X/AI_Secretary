@@ -146,7 +146,7 @@ and every run is bracketed by guardrails and recorded as a trace.
 
 ## Documentation
 
-Fourteen documents in reading order. Each links to the next — start at the top and
+Thirteen guides in reading order. Each links to the next — start at the top and
 keep going. Full index: [docs/README.md](docs/README.md).
 
 | # | Document | What you get |
@@ -179,7 +179,7 @@ agent system fits in your head from there.
 
 ```
 ai-secretary/
-├── docs/                  fourteen guides
+├── docs/                  thirteen guides + an index
 ├── server/
 │   ├── prisma/            schema.prisma — 9 models (SQLite, edit this)
 │   │   └── postgres/      generated Postgres schema + committed migrations

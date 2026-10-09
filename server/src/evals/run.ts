@@ -3,7 +3,11 @@ import { writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { guardrailSuite } from "./guardrails.eval.js";
 import { parserSuite } from "./parsers.eval.js";
-import { routerSuite, routerOfflineSuite } from "./router.eval.js";
+import {
+  routerSuite,
+  routerOfflineSuite,
+  planSuite,
+} from "./router.eval.js";
 import type { Suite, SuiteResult } from "./types.js";
 
 /**
@@ -21,6 +25,7 @@ import type { Suite, SuiteResult } from "./types.js";
 const SUITES: Suite[] = [
   guardrailSuite,
   parserSuite,
+  planSuite,
   routerOfflineSuite,
   routerSuite,
 ];

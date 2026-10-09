@@ -199,6 +199,15 @@ export type GatewayInfo = {
     ttlMs: number;
     cacheableRoles: string[];
   };
+  /** Embeddings are a pure function of (text, model), so this is free to cache. */
+  embeddingCache: {
+    entries: number;
+    maxEntries: number;
+    hits: number;
+    misses: number;
+    evictions: number;
+    hitRate: number | null;
+  };
 };
 
 /** The live guardrail policy, read from the server so the UI cannot drift. */

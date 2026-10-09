@@ -206,6 +206,7 @@ npm run start          # run the compiled server from dist/ (what production use
 npm run db:push        # apply schema.prisma to the database (development only)
 npm run db:studio      # browse the data in a GUI
 npm run mcp            # MCP stdio server
+npm run worker         # background worker: the reminder cron only, no HTTP server
 
 npm run eval           # 44 offline eval cases: guardrails + parsers. No API key.
 npm run eval:live      # also router accuracy (costs a few model calls)

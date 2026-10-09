@@ -23,6 +23,9 @@ important one: **a decision you cannot say "revisit when…" about is a guess.**
 | [13](#adr-13-sse-not-websockets) | SSE, not WebSockets | accepted |
 | [14](#adr-14-offline-first-evals) | Offline-first evals | accepted |
 | [15](#adr-15-a-trace-table-not-a-tracing-sdk) | A table, not a tracing SDK | accepted |
+| [16](#adr-16-a-planner-not-a-re-planning-supervisor) | A planner, not a re-planning supervisor | accepted |
+| [17](#adr-17-cache-three-of-the-six-layers) | Cache three of the six layers | accepted |
+| [18](#adr-18-cron-in-process-with-a-worker-escape-hatch) | Cron in-process, with a worker escape hatch | accepted |
 
 ---
 
@@ -381,6 +384,107 @@ no alerting, no retention policy by default.
 **Revisit when** there is a second process to correlate across — a queue, a
 worker, a split service. Then OpenTelemetry, and it will be the right choice
 *because* of that, not because it looks impressive.
+
+---
+
+## ADR 16: A planner, not a re-planning supervisor
+
+**Decision.** The router returns an ordered plan of up to three agents, decided
+**once**. Every node then follows the same rule: run `plan[planStep]`, advance,
+repeat until the plan is exhausted.
+
+**Why.** One-agent routing could not serve requests that genuinely need two
+steps — *"research the latest on RAG and make a deck"* is `search` then `ppt`.
+The first version had a single hardcoded `search → chat` edge, which was the
+design admitting the gap existed. Generalising it to a list removed the special
+case **and** added the capability: the graph now has one edge shape everywhere
+instead of one per agent plus an exception.
+
+**Why not a re-planning supervisor** (one that reconsiders after each step)?
+It costs a model call per step, and it can loop. A plan decided once and capped
+is predictable, cheap, and covers the combinations that actually occur.
+
+**Trade-off.** The plan cannot adapt to what it finds. If `search` returns
+nothing useful, `ppt` still runs and writes from training data. There is no
+retry of a failed sub-step, and no branching on a result.
+
+**What keeps it safe.** Four parser rules (de-duplicate, a trailing `search`
+gets a writer, a non-consumer after `search` is corrected, length capped) plus
+five eval cases that walk a plan to completion to prove it terminates — a plan
+that never reaches `END` would hang a request.
+
+**Revisit when** you need retry of individual steps, branching on a result, or
+parallel agents. Then add a supervisor node that loops back — and get the
+evidence from the live eval suite first, rather than assuming.
+
+---
+
+## ADR 17: Cache three of the six layers
+
+**Decision.** Cache exact-match responses (router only), embeddings, and HTTP
+assets. Do not use provider prompt caching, semantic caching, or tool-result
+caching.
+
+**Why each.**
+
+| Layer | Decision | Reason |
+|---|---|---|
+| Exact-match response | ✓ router only | the router returns a bounded label, so a shared hit leaks nothing and cannot be creative |
+| Embedding | ✓ | an embedding is a **pure function** of (text, model), so caching cannot change a result — only skip paid work |
+| HTTP / CDN | ✓ | Vite hashes asset names, so they are immutable; `index.html` is `no-cache` because it points at those names |
+| Provider prompt cache | ✗ | the system prompt is ~1,500 tokens (under most minimums) and embeds the current time plus per-user preferences, so it differs every call |
+| Semantic cache | ✗ | *"am I free at 4pm"* and *"at 5pm"* are neighbours in embedding space with different correct answers. Silent wrong answers are the worst failure mode available |
+| Tool results | ✗ | the calendar is the thing being asked about; a stale answer about your own day is worse than a slow one |
+
+**The key design point.** `"temperature is 0"` is not on its own a sufficient
+caching rule — a deterministic model is only deterministic for a **fixed**
+model. So the response-cache key is `role | provider | modelId | hash(input)`,
+and `CACHEABLE_ROLES` is a short explicit allowlist rather than a predicate.
+The user id is deliberately absent, because cacheable roles never return user
+content.
+
+**Trade-off.** Both caches are in-process: lost on restart, not shared across
+instances. The embedding cache is bounded at 5,000 entries and evicts oldest
+first, so a very large corpus would thrash it.
+
+**Revisit when** the system prompt is restructured into a static prefix plus a
+dynamic suffix — that unlocks provider prompt caching, which is the highest-value
+remaining win. Or when you run multiple instances and want a shared cache in
+Redis (the response key is already safe for it).
+
+---
+
+## ADR 18: Cron in-process, with a worker escape hatch
+
+**Decision.** `node-cron` runs the reminder sweep inside the web process by
+default. `ENABLE_SCHEDULER=false` plus `npm run worker` splits it out.
+
+**Why in-process.** One recurring job, idempotent, finishing in milliseconds. A
+queue (BullMQ) would mean Redis, a worker process and a dashboard to run one
+function on a timer.
+
+**Why the escape hatch exists.** Two things break the default, and both are
+real in production:
+
+1. **N instances run N sweeps.** Every web process has its own cron. `dedupeKey`
+   makes the duplicates harmless — a repeat writes nothing — but it is still N×
+   the Google quota for one result.
+2. **Idle hosts suspend containers.** Fly, Railway and Render stop a container
+   with no traffic, which stops the cron. Reminders then only fire while someone
+   is using the app, which is exactly backwards for a feature meant to tell you
+   about something *before* it happens.
+
+So [`worker.ts`](../server/src/worker.ts) runs the scheduler and nothing else —
+no HTTP server, so a host scaling on request volume leaves it alone. It refuses
+to start when `ENABLE_SCHEDULER` is false rather than idling silently.
+
+**Trade-off.** One worker replica, enforced by convention rather than by a lock.
+Two would reintroduce duplicate sweeps. A real distributed lock or a queue with
+a single consumer is the next step up.
+
+**Revisit when** you need more than one kind of background job, retries with
+backoff per job, or a job that takes minutes rather than milliseconds. Then a
+queue earns its keep.
 
 ---
 

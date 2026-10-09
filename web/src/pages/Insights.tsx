@@ -281,6 +281,16 @@ export default function Insights() {
                 label="Evictions"
                 value={String(gateway.cache.evictions)}
               />
+              <Row
+                label="Embedding cache"
+                value={
+                  gateway.embeddingCache.hitRate === null
+                    ? `${gateway.embeddingCache.entries} entries`
+                    : `${(gateway.embeddingCache.hitRate * 100).toFixed(0)}% of ${
+                        gateway.embeddingCache.hits + gateway.embeddingCache.misses
+                      }`
+                }
+              />
             </dl>
           </section>
         )}

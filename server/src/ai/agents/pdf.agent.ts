@@ -47,6 +47,27 @@ Topic: `;
  * Any line that does not start with a known tag is ignored, which is what
  * makes the "degrade, do not throw" behaviour above actually hold.
  */
+/**
+ * When a `search` step ran before this one, its results are in state. Feeding
+ * them in is the whole point of a ["search", "ppt"] plan — without this the
+ * deck would be written from training data and the research would be wasted.
+ *
+ * `searchResults` is `undefined` when no search ran and `""` when a search ran
+ * and found nothing, and neither should add an empty context block.
+ */
+function researchBlock(results: string | undefined) {
+  if (!results?.trim()) return "";
+
+  return `
+
+Use these web search results as the source of fact. They are more recent than
+your training data. Prefer them over what you remember, and do not invent
+figures that are not in them.
+
+${results}
+`;
+}
+
 function parseOutline(content: string, fallbackTitle: string): PdfDocumentSpec {
   const spec: PdfDocumentSpec = {
     title: fallbackTitle.slice(0, 120),
@@ -84,10 +105,10 @@ export async function pdfAgent(state: GraphStateType) {
   return runBilled(state.userId, "pdf", async () => {
     state.onProgress?.("Drafting the document");
 
-    const result = await invokeModel(PROMPT + state.prompt, {
-      role: "pdf",
-      meter: state.meter,
-    });
+    const result = await invokeModel(
+      PROMPT + state.prompt + researchBlock(state.searchResults),
+      { role: "pdf", meter: state.meter },
+    );
     const spec = parseOutline(String(result.content ?? ""), state.prompt);
 
     // Throwing refunds the credits rather than charging for an empty PDF.

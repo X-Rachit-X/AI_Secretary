@@ -1,6 +1,6 @@
 # AI Secretary documentation
 
-Fourteen documents, in reading order. Each one ends with a link to the next, so you
+Thirteen guides plus this index, in reading order. Each one ends with a link to the next, so you
 can start at the top and keep going.
 
 ---

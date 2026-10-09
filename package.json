@@ -21,7 +21,8 @@
     "db:pg:migrate": "npm run db:pg:migrate -w server --",
     "mcp": "npm run mcp -w server",
     "eval": "npm run eval -w server",
-    "eval:live": "npm run eval:live -w server"
+    "eval:live": "npm run eval:live -w server",
+    "worker": "npm run worker -w server"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

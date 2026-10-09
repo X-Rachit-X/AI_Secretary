@@ -1,4 +1,6 @@
-import { routerNode } from "../ai/router.node.js";
+import { routerNode, parsePlan } from "../ai/router.node.js";
+import { nextInPlan } from "../ai/graph.js";
+import { END } from "@langchain/langgraph";
 import { UsageMeter } from "../ai/gateway.js";
 import type { GraphStateType } from "../ai/state.js";
 import type { CaseResult, Suite } from "./types.js";
@@ -67,6 +69,8 @@ function stateFor(prompt: string, meter: UsageMeter): GraphStateType {
     turnId: "eval-turn",
     suspicious: false,
     agent: "auto",
+    plan: [],
+    planStep: 0,
     response: "",
     images: [],
     artifacts: [],
@@ -75,6 +79,184 @@ function stateFor(prompt: string, meter: UsageMeter): GraphStateType {
     toolCalls: 0,
   } as GraphStateType;
 }
+
+
+/**
+ * Offline suite: the plan parser.
+ *
+ * These are the rules that keep a multi-agent plan executable, and all of them
+ * are pure string handling — so they are checkable with no model and no network.
+ * Worth having because a bad plan does not throw: it either ends the turn early
+ * or loops, and both look like "the agent is being weird".
+ */
+const PLAN_CASES: Array<{
+  id: string;
+  about: string;
+  reply: string;
+  expect: string[];
+}> = [
+  {
+    id: "plan.single",
+    about: "one agent stays one agent",
+    reply: "chat",
+    expect: ["chat"],
+  },
+  {
+    id: "plan.pair",
+    about: "a two-step plan is preserved in order",
+    reply: "search -> ppt",
+    expect: ["search", "ppt"],
+  },
+  {
+    id: "plan.noisy_reply",
+    about: "models answer with punctuation and prose; only valid names survive",
+    reply: "Plan: search -> ppt. (research first)",
+    expect: ["search", "ppt"],
+  },
+  {
+    id: "plan.search_needs_writer",
+    about:
+      "RULE: a trailing search cannot answer, so chat is appended",
+    reply: "search",
+    expect: ["search", "chat"],
+  },
+  {
+    id: "plan.search_bad_consumer",
+    about:
+      "RULE: search -> image is nonsense (image cannot read research), corrected to chat",
+    reply: "search -> image",
+    expect: ["search", "chat"],
+  },
+  {
+    id: "plan.dedupe",
+    about: "RULE: duplicates are dropped so a plan cannot loop",
+    reply: "chat -> chat",
+    expect: ["chat"],
+  },
+  {
+    id: "plan.capped",
+    about: "RULE: a long plan is capped, because every step is billed",
+    reply: "search -> chat -> pdf -> ppt -> coding -> image",
+    expect: ["search", "chat", "pdf"],
+  },
+  {
+    id: "plan.garbage",
+    about: "DEGRADE: an unusable reply falls back to chat, never to nothing",
+    reply: "I am not sure what you mean",
+    expect: ["chat"],
+  },
+  {
+    id: "plan.empty",
+    about: "DEGRADE: an empty reply falls back to chat",
+    reply: "",
+    expect: ["chat"],
+  },
+  {
+    id: "plan.rejects_unknown",
+    about: "an agent name that does not exist is dropped, not executed",
+    reply: "chat -> translator",
+    expect: ["chat"],
+  },
+];
+
+
+/**
+ * Walk a plan the way the graph does: ask nextInPlan, "run" the node, advance,
+ * repeat. This asserts the two properties that matter — the agents fire in the
+ * right ORDER, and the walk TERMINATES.
+ *
+ * A plan that never reaches END would hang a real request, so the step cap is
+ * asserted here rather than trusted.
+ */
+function walkPlan(plan: string[]): string[] {
+  const visited: string[] = [];
+  let step = 0;
+
+  // Bounded so a broken rule fails the test instead of hanging the suite.
+  for (let guard = 0; guard < 20; guard += 1) {
+    const next = nextInPlan({ plan, planStep: step } as never);
+    if (next === END) break;
+    visited.push(String(next));
+    step += 1;
+  }
+
+  return visited;
+}
+
+const WALK_CASES: Array<{ id: string; about: string; plan: string[]; expect: string[] }> = [
+  {
+    id: "walk.single",
+    about: "a one-step plan runs once and ends",
+    plan: ["chat"],
+    expect: ["chat"],
+  },
+  {
+    id: "walk.pair_in_order",
+    about: "a two-step plan runs both, in order",
+    plan: ["search", "ppt"],
+    expect: ["search", "ppt"],
+  },
+  {
+    id: "walk.terminates_at_cap",
+    about:
+      "SAFETY: a plan longer than MAX_PLAN_STEPS stops at the cap instead of running on",
+    plan: ["search", "chat", "pdf", "ppt", "coding"],
+    expect: ["search", "chat", "pdf"],
+  },
+  {
+    id: "walk.empty_plan_ends",
+    about: "DEGRADE: an empty plan ends the turn rather than hanging",
+    plan: [],
+    expect: [],
+  },
+  {
+    id: "walk.unknown_node_ends",
+    about:
+      "SAFETY: a plan naming a node that does not exist ends the turn rather than hanging the graph",
+    plan: ["chat", "nonexistent"],
+    expect: ["chat"],
+  },
+];
+
+export const planSuite: Suite = {
+  name: "router-plans",
+  kind: "offline",
+  about:
+    "plans parse safely and execute in order, and every plan terminates",
+  run: async () => [
+    ...WALK_CASES.map((testCase) => {
+      const actual = walkPlan(testCase.plan);
+      const passed = JSON.stringify(actual) === JSON.stringify(testCase.expect);
+
+      return {
+        id: testCase.id,
+        about: testCase.about,
+        passed,
+        score: passed ? 1 : 0,
+        expected: testCase.expect,
+        actual,
+        note: passed
+          ? undefined
+          : `[${testCase.plan.join(",")}] walked as [${actual.join(",")}]`,
+      };
+    }),
+    ...PLAN_CASES.map((testCase) => {
+      const actual = parsePlan(testCase.reply);
+      const passed =
+        JSON.stringify(actual) === JSON.stringify(testCase.expect);
+
+      return {
+        id: testCase.id,
+        about: testCase.about,
+        passed,
+        score: passed ? 1 : 0,
+        expected: testCase.expect,
+        actual,
+        note: passed ? undefined : `"${testCase.reply}" produced ${actual.join(" -> ")}`,
+      };
+    }),
+  ],
+};
 
 export const routerSuite: Suite = {
   name: "router",

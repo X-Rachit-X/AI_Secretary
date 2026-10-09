@@ -101,6 +101,15 @@ export const env = {
 
   tavilyApiKey: optional("TAVILY_API_KEY"),
 
+  /**
+   * Run the reminder sweep in THIS process.
+   *
+   * True is the right default for a single instance. Set it false on the web
+   * instances and true on exactly one `npm run worker` process once you scale
+   * past one, or you get N duplicate sweeps. See server/src/worker.ts.
+   */
+  enableScheduler: optional("ENABLE_SCHEDULER", "true") !== "false",
+
   reminderCron: optional("REMINDER_CRON", "*/5 * * * *"),
   reminderLeadMinutes: Number(optional("REMINDER_LEAD_MINUTES", "15")),
 
