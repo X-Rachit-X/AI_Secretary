@@ -13,9 +13,11 @@ good sounds junior. Someone who knows what it costs sounds senior.
 
 Lead with the hard part, not the feature list.
 
-> "It's a multi-agent assistant in TypeScript. A router picks one of nine agents —
-> chat, web search, code, PDF, slides, images, vision, document Q&A, and a
-> calendar-and-mail agent that's a ReAct loop over 16 Google tools.
+> "It's a multi-agent assistant in TypeScript. A router picks one of five
+> handlers. Two are ReAct loops — a studio over five content tools (web search,
+> documents, decks, images, code) and a workspace over 16 Google Calendar and
+> Gmail tools. Chat is one-shot for plain questions, and two more are chosen by
+> an uploaded file's type.
 >
 > The interesting problem wasn't the agents, it was safety. The agent reads your
 > email, which means **anyone on the internet can put text into its context** —
@@ -42,7 +44,7 @@ verifiable, and it shows the tests do work.
 
 **Answer honestly, which is more impressive than overselling it.**
 
-> "For nine agents and one hand-off, a switch statement would genuinely also work.
+> "For five nodes, a switch statement would genuinely also work.
 > The graph buys three things: one inspectable state object so debugging is reading
 > it; compile-time validation of the wiring, so a typo in a destination fails at
 > boot rather than mid-conversation; and composition — adding `search → chat` was a
@@ -260,51 +262,71 @@ more than the whole feature list.
 
 ### "Can one request use more than one agent?"
 
-**Yes, and the way it got there is the interesting part.**
-
-> "The router returns an ordered plan, not a single agent. `state.plan` is a
-> list and `state.planStep` tracks progress, and every node — the router and all
-> nine agents — uses the same conditional edge: *what's next in the plan?*
+> "Yes — and how it got there is the part worth hearing.
 >
-> So *'research the latest on RAG and make a deck'* becomes `["search", "ppt"]`,
-> and `chat`, `pdf`, `ppt` and `coding` all read `state.searchResults` so the
-> research actually gets used.
+> `studio` is a ReAct loop over five tools: `web_search`, `make_deck`,
+> `make_pdf`, `make_image`, `write_code`. So *'research the latest on RAG and
+> make a deck'* is two tool calls inside one loop, and the model sees the search
+> results before deciding what to build.
 >
-> The first version routed to one agent and sent every node to END — with one
-> hardcoded `search → chat` edge so a search could become a cited answer. That
-> exception was the design telling on itself. Generalising it to a list removed
-> the special case **and** added the capability: the graph went from one edge per
-> agent plus an exception to one edge shape everywhere."
-
-> 💡 That last point is the strongest thing to say: a refactor that made the code
-> *simpler* and *more capable* at the same time is rare, and interviewers notice
-> when you can name one.
-
-### "Is it a supervisor or a router?"
-
-Be precise — this is a real distinction and claiming the wrong one is a trap.
-
-> "It's a **planner**, not a re-planning supervisor. The plan is decided once,
-> capped at three steps, and executed in order. A true supervisor reconsiders
-> after every step.
+> I got there via two wrong designs. First, one agent per request — which
+> couldn't serve that sentence at all. Then a plan: the router returned
+> `["search","ppt"]` and the graph walked it. That worked, but it needed two
+> state channels, a parser with four correction rules, an edge function, a
+> wrapper and 15 tests.
 >
-> I chose once-and-capped deliberately: re-planning costs a model call per step
-> and can loop, for cases I don't have. If I needed to retry a failed sub-step,
-> branch on a result, or run agents in parallel, I'd add a supervisor node that
-> loops back — and I'd want the live eval suite to show me the current one
-> failing first, rather than assuming."
-
-### "What happens if the plan is nonsense?"
-
-> "Four parser rules, all eval-covered. Duplicates are dropped so `chat → chat`
-> can't waste a billed step. A trailing `search` gets a writer appended, because
-> search only gathers. `search → image` gets corrected, because image can't read
-> research. And it's capped at three, because every step is a billed agent run,
-> so an unbounded plan is an unbounded bill.
+> Then I asked the right question: **does `ppt` actually decide anything?** It
+> doesn't. One model call, parse, render. Neither does `pdf`, `image`, `coding`
+> or `search`. They were tools, and because I'd made them agents, the *graph*
+> had to do their deciding — which is exactly what the plan was.
 >
-> There are also five cases that **walk a plan to completion** to prove it
-> terminates — a plan that never reaches END would hang a real request, and that
-> isn't the kind of thing you want to discover in production."
+> Making them tools deleted the plan, four nodes and 15 tests, and gained things
+> a fixed plan can't do: if the search comes back empty the model reads that and
+> says so, instead of producing a deck that pretends to be researched."
+
+> 💡 Lead with this if you only get one architecture question. It is a judgement
+> call, you can name what it deleted, and it ends with a capability you couldn't
+> express before.
+
+### "So what's the difference between an agent and a tool?"
+
+> "**An agent decides. A tool does.**
+>
+> Concretely: does it make a choice based on something it learns at runtime? A
+> ReAct loop does — it reads a tool result and picks the next call. A PDF
+> generator doesn't; it's a pure pipeline.
+>
+> Getting it backwards is what produced my plan mechanism: orchestration code
+> that existed purely to compensate for components that couldn't orchestrate
+> themselves.
+>
+> It's also why `chat` is still a one-shot node rather than a tool — it needs no
+> tools, so a loop would only pay a model call to conclude that."
+
+### "Why two ReAct loops instead of one agent with all 21 tools?"
+
+> "Two reasons. Twenty-one tool descriptions in one prompt is a lot — tool
+> selection degrades as the belt grows, and these two sets don't overlap at all.
+>
+> More importantly the Google tools carry a **human-approval gate** and a very
+> different system prompt: a long section on what needs confirming and how to
+> describe it. Mixing that into the studio prompt would dilute both.
+>
+> Two focused loops beat one crowded one. If a request genuinely needed both —
+> 'summarise my unread mail into a PDF' — that's the case for a supervisor above
+> them, and I'd want to see it come up before building it."
+
+### "How do you stop the loop running away?"
+
+> "Three layers. `recursionLimit: 18`, so one step is one model or tool call.
+> Per-turn budgets in the tools themselves — three searches, two generations —
+> which are the real ceiling and return a refusal the model is told not to
+> retry. And `runBilled` charges before the work and refunds on failure, so a
+> loop that fails costs nothing.
+>
+> The budgets return a *message*, not an exception, deliberately: a thrown error
+> aborts the whole loop, while a refusal lets the model tell the user it hit a
+> limit."
 
 ### "What do you cache? What would you normally cache in an LLM app?"
 
@@ -491,7 +513,7 @@ Five minutes, in this order. Each step shows a different thing.
 | 6 | Open **Insights** | cost per agent, p95 latency, guardrail counts |
 | 7 | Terminal: `npm run eval` | 44/44 in under a second |
 | 8 | *"Make a deck on RAG"* | tagged-text generation → real .pptx |
-| 9 | *"Research the latest on RAG and make a deck"* | **a two-agent plan** — watch the progress line say "Running search then ppt" |
+| 9 | *"Research the latest on RAG and make a deck"* | **the ReAct loop** — search, then a deck built from those results |
 | 10 | Open **Insights** again | cache hit rate, embedding cache, tool timeout |
 
 If something breaks, say what you expected and what the fix would be. Diagnosing
@@ -507,14 +529,14 @@ live is a better signal than a demo that works.
 
 | | |
 |---|---|
-| Source files | 90 (66 server, 24 web) |
-| Agents | 9, plus plans of up to 3 |
-| Tools | 16 across 3 files |
+| Source files | 92 (68 server, 24 web) |
+| Graph nodes | 5 — two ReAct loops, one one-shot, two file-driven |
+| Tools | 21 — 16 Google + 5 content |
 | MCP tools | 10 |
 | Guardrail layers | 4 — three advisory, one hard |
 | Cache layers used | 3 of 6 |
-| Max plan steps | 3 |
-| Offline eval cases | 59, ~40ms, no API key |
+| Studio per-turn budget | 3 searches, 2 generations |
+| Offline eval cases | 51, ~40ms, no API key |
 | Live eval cases | 21 |
 | Bugs the evals found | 3 |
 | Credit cost | 1 chat → 10 image |
@@ -548,8 +570,8 @@ without thinking.
 5. *"The offline evals need no API key, which is the only reason they'll still be
    running in six months."*
 
-6. *"Generalising the one hardcoded `search → chat` edge into a plan removed a
-   special case and added multi-agent requests at the same time."*
+6. *"Five of my nine 'agents' never decided anything, so they were tools.
+   Making them tools of one ReAct loop deleted a whole scheduler."*
 
 7. *"Embeddings are a pure function of (text, model), so that cache can't change
    an answer — only skip paid work. That's why it's the one cache with no TTL."*

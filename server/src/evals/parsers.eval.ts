@@ -1,4 +1,5 @@
 import { MemoryVectorStore } from "../ai/vector-store.js";
+import { parseDeck, parseOutline } from "../ai/content/documents.js";
 import type { CaseResult, Suite } from "./types.js";
 
 /**
@@ -10,59 +11,11 @@ import type { CaseResult, Suite } from "./types.js";
  * so it is worth pinning down — including the malformed cases, where the
  * required behaviour is *degrade, do not throw*.
  *
- * The parsers are re-implemented here rather than imported, because in the
- * agents they are module-private. That is a deliberate trade: exporting them
- * only for tests would widen the agents' public surface for no runtime reason,
- * and these two functions are small enough that a copy is cheaper than the
- * coupling. If they grow, export them and delete these.
+ * The parsers are imported from ai/content/documents.ts rather than copied.
+ * They used to be private to the agent files, so the tests held duplicates;
+ * now that the content capabilities are plain exported functions, the tests
+ * check the real thing — which is the point of having moved them.
  */
-
-// ── Deck parser (mirrors ppt.agent.ts) ──────────────────────────────────────
-
-type ParsedDeck = {
-  title: string;
-  subtitle?: string;
-  slides: Array<{ type: string; title: string; items: string[] }>;
-};
-
-function parseDeck(content: string, fallbackTitle: string): ParsedDeck {
-  const spec: ParsedDeck = { title: fallbackTitle.slice(0, 100), slides: [] };
-
-  const titleMatch = content.match(/^TITLE:\s*(.+)$/m);
-  if (titleMatch) spec.title = titleMatch[1].trim();
-
-  const subtitleMatch = content.match(/^SUBTITLE:\s*(.+)$/m);
-  if (subtitleMatch) spec.subtitle = subtitleMatch[1].trim();
-
-  for (const block of content.split(/^SLIDE:/m).slice(1)) {
-    const lines = block
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-
-    const title =
-      lines.find((line) => line.startsWith("Title:"))?.slice(6).trim() ||
-      "Slide";
-
-    const type =
-      lines
-        .find((line) => line.startsWith("Type:"))
-        ?.slice(5)
-        .trim()
-        .toLowerCase() ?? "bullets";
-
-    const items = lines
-      .filter((line) => line.startsWith("- "))
-      .map((line) => line.slice(2).trim())
-      .filter(Boolean);
-
-    if (items.length === 0) continue;
-
-    spec.slides.push({ type, title, items });
-  }
-
-  return spec;
-}
 
 const GOOD_DECK = `TITLE: Retrieval Augmented Generation
 SUBTITLE: Grounding models in your own data
@@ -91,7 +44,7 @@ const DECK_CASES: Array<{
   id: string;
   about: string;
   input: string;
-  check: (deck: ParsedDeck) => string | null;
+  check: (deck: ReturnType<typeof parseDeck>) => string | null;
 }> = [
   {
     id: "deck.happy",
@@ -102,7 +55,13 @@ const DECK_CASES: Array<{
       if (deck.slides.length !== 3)
         return `expected 3 slides, got ${deck.slides.length}`;
       if (deck.slides[1].type !== "stats") return "stats slide not detected";
-      if (deck.slides[0].items.length !== 3) return "bullets lost";
+
+      // DeckSlide is a discriminated union, so `items` has to be narrowed —
+      // which is exactly the kind of mistake importing the real type catches.
+      const first = deck.slides[0];
+      if (first.type === "stats") return "first slide should be bullets";
+      if (first.items.length !== 3) return "bullets lost";
+
       return null;
     },
   },
@@ -145,45 +104,11 @@ const DECK_CASES: Array<{
   },
 ];
 
-// ── Document parser (mirrors pdf.agent.ts) ──────────────────────────────────
-
-type ParsedDoc = {
-  title: string;
-  sections: Array<{ heading: string; paragraphs: string[]; bullets: string[] }>;
-};
-
-function parseOutline(content: string, fallbackTitle: string): ParsedDoc {
-  const spec: ParsedDoc = { title: fallbackTitle.slice(0, 120), sections: [] };
-  let current: ParsedDoc["sections"][number] | null = null;
-
-  for (const rawLine of content.split("\n")) {
-    const line = rawLine.trim();
-    if (!line) continue;
-
-    if (line.startsWith("TITLE:")) {
-      spec.title = line.slice(6).trim() || spec.title;
-    } else if (line.startsWith("SECTION:")) {
-      current = {
-        heading: line.slice(8).trim() || "Section",
-        paragraphs: [],
-        bullets: [],
-      };
-      spec.sections.push(current);
-    } else if (line.startsWith("P:") && current) {
-      current.paragraphs.push(line.slice(2).trim());
-    } else if (line.startsWith("B:") && current) {
-      current.bullets.push(line.slice(2).trim());
-    }
-  }
-
-  return spec;
-}
-
 const DOC_CASES: Array<{
   id: string;
   about: string;
   input: string;
-  check: (doc: ParsedDoc) => string | null;
+  check: (doc: ReturnType<typeof parseOutline>) => string | null;
 }> = [
   {
     id: "doc.happy",
@@ -202,7 +127,8 @@ B: Useless for leading wildcards`,
     check: (doc) => {
       if (doc.title !== "Postgres Indexing") return "wrong title";
       if (doc.sections.length !== 2) return "wrong section count";
-      if (doc.sections[1].bullets.length !== 2) return "bullets lost";
+      // `bullets` is optional on PdfDocumentSpec: a section may have none.
+      if ((doc.sections[1].bullets ?? []).length !== 2) return "bullets lost";
       return null;
     },
   },

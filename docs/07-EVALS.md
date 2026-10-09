@@ -168,8 +168,8 @@ Current state: **44/44 offline.**
 
 [`server/src/ai/gateway.ts`](../server/src/ai/gateway.ts)
 
-Calling `model.invoke()` directly from nine agents means nine copies of the retry
-logic, nine places that forget the timeout, and no way to answer *"what did today
+Calling `model.invoke()` directly from every agent means a copy of the retry
+logic in each, several places that forget the timeout, and no way to answer *"what did today
 cost?"*. The gateway is that logic, once.
 
 Every agent calls `invokeModel(messages, { role, meter })`. Nothing calls

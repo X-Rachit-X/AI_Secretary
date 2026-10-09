@@ -1,17 +1,8 @@
 import { END, START, StateGraph } from "@langchain/langgraph";
-import {
-  GraphState,
-  MAX_PLAN_STEPS,
-  type AgentName,
-  type GraphStateType,
-} from "./state.js";
+import { GraphState, type AgentName, type GraphStateType } from "./state.js";
 import { routerNode } from "./router.node.js";
 import { chatAgent } from "./agents/chat.agent.js";
-import { searchAgent } from "./agents/search.agent.js";
-import { codingAgent } from "./agents/coding.agent.js";
-import { pdfAgent } from "./agents/pdf.agent.js";
-import { pptAgent } from "./agents/ppt.agent.js";
-import { imageAgent } from "./agents/image.agent.js";
+import { studioAgent } from "./agents/studio.agent.js";
 import { visionAgent } from "./agents/vision.agent.js";
 import { docqaAgent } from "./agents/docqa.agent.js";
 import { workspaceAgent } from "./agents/workspace.agent.js";
@@ -19,147 +10,92 @@ import { workspaceAgent } from "./agents/workspace.agent.js";
 /**
  * The supervisor graph.
  *
- *                      ┌──────────┐
- *           START ───▶ │  router  │  writes state.plan, e.g. ["search","ppt"]
- *                      └────┬─────┘
- *                           │
- *                    ┌──────▼───────┐
- *              ┌────▶│ nextInPlan() │────▶ END   when the plan is exhausted
- *              │     └──────┬───────┘
- *              │            │ plan[planStep]
- *              │   ┌────────┴─────────────────────────────┬─────────┐
- *              │   ▼            ▼        ▼       ▼        ▼         ▼
- *              │ chat        search    coding   pdf/ppt  vision   workspace
- *              │   │            │        │       │        │         │
- *              └───┴────────────┴────────┴───────┴────────┴─────────┘
- *                         every agent advances the plan by one
+ *                    ┌──────────┐
+ *         START ───▶ │  router  │
+ *                    └────┬─────┘
+ *                         │ conditional edge on state.agent
+ *        ┌────────┬───────┴────┬──────────┬──────────┐
+ *        ▼        ▼            ▼          ▼          ▼
+ *      chat    studio      workspace   vision     docqa
+ *        │        │            │          │          │
+ *        └────────┴────────────┴──────────┴──────────┘
+ *                              ▼
+ *                             END
  *
- * ── Why a plan rather than one agent ────────────────────────────────────────
+ * ── Five nodes, and why it is not nine ──────────────────────────────────────
  *
- * The first version picked exactly one agent and every node went straight to
- * END — with one hardcoded exception, `search -> chat`, so that a web search
- * could be turned into a cited answer.
+ * It used to be nine, with `search`, `pdf`, `ppt`, `image` and `coding` as
+ * separate nodes. Then a plan mechanism was bolted on so that one request could
+ * use two of them in order.
  *
- * That exception was the design telling on itself. Real requests sometimes need
- * two agents:
+ * Both of those were the wrong shape. Each of those five did exactly "call a
+ * model once, parse, render, return" — no loop, no choice. **An agent is
+ * something that decides.** They decided nothing, so the graph was forced to
+ * decide for them, in advance, from the prompt alone.
  *
- *   "research the latest on RAG and make a deck"   -> ["search", "ppt"]
- *   "what's the newest Node release?"              -> ["search", "chat"]
- *   "write a PDF on our Q3 numbers from the web"   -> ["search", "pdf"]
+ * They are tools now, and `studio` is a ReAct loop that calls them. The loop
+ * sees each result before choosing the next step, so "research X and make a
+ * deck" works — and an empty search leads to the model saying so, rather than
+ * producing a document that pretends to be researched.
  *
- * With a one-agent router the first of those is impossible: you get a deck with
- * no research, or research with no deck.
+ * Deleted along the way: `state.plan`, `state.planStep`, `parsePlan` with its
+ * four correction rules, `nextInPlan`, `withPlanAdvance`, and four graph nodes.
+ * The routing table below is the whole of the routing logic again.
  *
- * So the router returns an ORDERED LIST, and routing became a single rule —
- * "run plan[planStep], then advance" — applied uniformly from the router and
- * from every agent. The special case disappeared: `search -> chat` is now just
- * the plan `["search", "chat"]`, with no edge dedicated to it.
+ * ── What is still a node, and why ───────────────────────────────────────────
  *
- * This is the smallest change that makes multi-agent requests work. It is
- * deliberately NOT a re-planning supervisor that reconsiders after every step:
- * that costs a model call per step and can loop. A plan decided once, capped at
- * MAX_PLAN_STEPS, is predictable and cheap, and covers the cases that actually
- * come up. See docs/13-DECISIONS.md ADR 16.
+ *   chat       one-shot. A plain question should not pay for a loop that
+ *              decides it needs no tools.
+ *   studio     ReAct over 5 content tools.
+ *   workspace  ReAct over 16 Google tools. Separate from studio because its
+ *              tools carry a human-approval gate and a very different prompt.
+ *   vision     a file decides it, from the MIME type. Not a judgement.
+ *   docqa      same.
  */
 
-/** Node name -> the function that runs it. Adding an agent starts here. */
+/** Node name -> the function that runs it. Adding a node starts here. */
 const AGENT_NODES = {
   chat: chatAgent,
-  search: searchAgent,
-  coding: codingAgent,
-  pdf: pdfAgent,
-  ppt: pptAgent,
-  image: imageAgent,
+  studio: studioAgent,
+  workspace: workspaceAgent,
   vision: visionAgent,
   docqa: docqaAgent,
-  workspace: workspaceAgent,
 } as const;
 
-export const AGENT_NAMES = Object.keys(AGENT_NODES) as AgentName[];
-
-type AgentFn = (state: GraphStateType) => Promise<Record<string, unknown>>;
-
-/**
- * Wrap an agent so it advances the plan when it finishes.
- *
- * Done here rather than inside each agent on purpose: the nine agent files stay
- * simple functions of `state -> partial state` and know nothing about plans.
- * Adding a tenth agent needs no plan-awareness at all.
- */
-function withPlanAdvance(agent: AgentFn): AgentFn {
-  return async (state) => ({ ...(await agent(state)), planStep: 1 });
-}
-
-/**
- * The single routing rule, used by the router and by every agent.
- *
- * Reads the next entry in the plan; END when the plan is finished. Pure: it
- * only reads state, because a conditional edge must not have side effects.
- */
-export function nextInPlan(state: GraphStateType): AgentName | typeof END {
-  const plan = state.plan ?? [];
-  const step = state.planStep ?? 0;
-
-  if (step >= plan.length || step >= MAX_PLAN_STEPS) return END;
-
-  const next = plan[step];
-
-  // A plan entry that is not a real node would hang the graph, so fall back to
-  // ending the turn rather than trusting the router's output blindly.
-  return next && next in AGENT_NODES ? next : END;
-}
-
-/**
- * Destination map. LangGraph validates the wiring against it at compile time,
- * which is why it is spelled out rather than generated: the literal keys are
- * what let the compiler check that `nextInPlan` can only return a real node.
- */
-const ROUTE_MAP = {
-  chat: "chat",
-  search: "search",
-  coding: "coding",
-  pdf: "pdf",
-  ppt: "ppt",
-  image: "image",
-  vision: "vision",
-  docqa: "docqa",
-  workspace: "workspace",
-  [END]: END,
-} as const;
-
-/**
- * Nodes are registered one by one rather than in a loop.
- *
- * `addNode` is fluent and each call widens the builder's TYPE with the new node
- * name, which is how LangGraph type-checks edge destinations. A loop discards
- * those return values, so the compiler would only know about "router" and every
- * edge below would fail to type. Nine explicit lines buy real checking.
- */
 const builder = new StateGraph(GraphState)
   .addNode("router", routerNode)
-  .addNode("chat", withPlanAdvance(AGENT_NODES.chat))
-  .addNode("search", withPlanAdvance(AGENT_NODES.search))
-  .addNode("coding", withPlanAdvance(AGENT_NODES.coding))
-  .addNode("pdf", withPlanAdvance(AGENT_NODES.pdf))
-  .addNode("ppt", withPlanAdvance(AGENT_NODES.ppt))
-  .addNode("image", withPlanAdvance(AGENT_NODES.image))
-  .addNode("vision", withPlanAdvance(AGENT_NODES.vision))
-  .addNode("docqa", withPlanAdvance(AGENT_NODES.docqa))
-  .addNode("workspace", withPlanAdvance(AGENT_NODES.workspace));
+  .addNode("chat", AGENT_NODES.chat)
+  .addNode("studio", AGENT_NODES.studio)
+  .addNode("workspace", AGENT_NODES.workspace)
+  .addNode("vision", AGENT_NODES.vision)
+  .addNode("docqa", AGENT_NODES.docqa);
 
 builder.addEdge(START, "router");
 
 /**
- * One rule, applied from the router and from every agent.
- *
- * This is the part worth noticing: the whole graph has a single edge shape.
- * Before, each agent had its own `addEdge(name, END)` plus one special
- * `search -> chat`. Now every node asks the same question — "what is next in
- * the plan?" — so adding an agent means registering a node and nothing else.
+ * The router has already normalised `state.agent` to a real node name, so this
+ * is a lookup rather than a second decision. The third argument is the map of
+ * possible destinations, which LangGraph validates at compile time — a typo in
+ * a name fails at boot rather than mid-conversation.
  */
-for (const source of ["router", ...AGENT_NAMES] as const) {
-  builder.addConditionalEdges(source, nextInPlan, ROUTE_MAP);
-}
+builder.addConditionalEdges(
+  "router",
+  (state: GraphStateType) =>
+    state.agent in AGENT_NODES ? (state.agent as AgentName) : "chat",
+  {
+    chat: "chat",
+    studio: "studio",
+    workspace: "workspace",
+    vision: "vision",
+    docqa: "docqa",
+  },
+);
+
+builder.addEdge("chat", END);
+builder.addEdge("studio", END);
+builder.addEdge("workspace", END);
+builder.addEdge("vision", END);
+builder.addEdge("docqa", END);
 
 /**
  * Compiled once at import time. Compilation validates the node and edge wiring,
@@ -167,18 +103,28 @@ for (const source of ["router", ...AGENT_NAMES] as const) {
  */
 export const graph = builder.compile();
 
-/** Everything the UI needs to render the agent picker. Single source of truth. */
+/**
+ * The agent picker in the UI.
+ *
+ * It no longer lists pdf / ppt / image / search separately: those are things
+ * the studio makes, not modes a user picks. Asking for a deck is how you get a
+ * deck.
+ */
 export const AGENT_CATALOG: Array<{
   id: AgentName | "auto";
   label: string;
   hint: string;
 }> = [
-  { id: "auto", label: "Auto", hint: "Let the router pick the right agents" },
+  { id: "auto", label: "Auto", hint: "Let the router decide" },
   { id: "chat", label: "Chat", hint: "General questions and explanations" },
-  { id: "workspace", label: "Calendar & Mail", hint: "Your meetings and inbox" },
-  { id: "search", label: "Web search", hint: "Fresh information with citations" },
-  { id: "coding", label: "Code", hint: "Build, review, debug" },
-  { id: "pdf", label: "PDF", hint: "Generate a PDF document" },
-  { id: "ppt", label: "Slides", hint: "Generate a PowerPoint deck" },
-  { id: "image", label: "Image", hint: "Generate a picture" },
+  {
+    id: "studio",
+    label: "Studio",
+    hint: "Research, documents, decks, images and code",
+  },
+  {
+    id: "workspace",
+    label: "Calendar & Mail",
+    hint: "Your meetings and inbox",
+  },
 ];

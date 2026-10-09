@@ -12,7 +12,7 @@ can start at the top and keep going.
 | 01 | [Overview](01-OVERVIEW.md) | What this is, what it does, a 10-minute tour of the whole system | 10 min |
 | 02 | [Concepts](02-CONCEPTS.md) | **Every concept, taught with the actual code.** Agents, tools, LangGraph, ReAct, RAG, MCP, SSE, OAuth, injection | 60 min |
 | 03 | [Architecture](03-ARCHITECTURE.md) | The design and every trade-off, with diagrams | 25 min |
-| 04 | [File guide](04-FILE-GUIDE.md) | All 90 files: what each does and the one detail worth knowing | 30 min |
+| 04 | [File guide](04-FILE-GUIDE.md) | All 92 files: what each does and the one detail worth knowing | 30 min |
 | 05 | [Data flows](05-DATA-FLOWS.md) | Eight real requests traced end to end | 25 min |
 | 06 | [Guardrails](06-GUARDRAILS.md) | The four safety layers, and the attack that shapes them | 25 min |
 | 07 | [Evals and gateway](07-EVALS.md) | How correctness is measured; retries, fallback, cost | 20 min |
@@ -71,16 +71,17 @@ Insights page.
 
 ## The 30-second version
 
-A TypeScript multi-agent assistant. A **router** picks one of nine agents; eight
-answer in a single pass, and the ninth (`workspace`) is a **ReAct loop** holding
-16 Google Calendar, Gmail and notification tools.
+A TypeScript multi-agent assistant. A **router** picks one of five handlers. Two
+are **ReAct loops** — `studio` over 5 content tools and `workspace` over 16
+Google tools. `chat` is one-shot; `vision` and `docqa` are chosen by a file's
+type.
 
 Four things make it more than a demo:
 
 | | |
 |---|---|
 | **Guardrails** | irreversible actions need human approval, and the approve step runs with no model involved |
-| **Evals** | 44 offline cases, no API key, runnable in CI |
+| **Evals** | 51 offline cases, no API key, runnable in CI |
 | **Gateway** | one place for retry, timeout, fallback, caching and cost |
 | **Traces** | one row per run, surfaced on an Insights page |
 

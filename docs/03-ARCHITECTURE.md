@@ -11,10 +11,10 @@ A TypeScript multi-agent assistant that acts on a real Google account.
 | | |
 |---|---|
 | **Shape** | one Express process, one database, one folder of generated files |
-| **Agents** | 9 — eight answer in a single pass, one is a tool-using loop |
-| **Tools** | 16 Google Calendar, Gmail and notification tools |
+| **Nodes** | 5 — two are ReAct loops, one is one-shot, two are file-driven |
+| **Tools** | 21 — 16 Google (calendar, mail, notifications) and 5 content (search, docs, decks, images, code) |
 | **Safety** | four guardrail layers; irreversible actions need human approval |
-| **Quality** | 44 offline eval cases that run with no API key |
+| **Quality** | 51 offline eval cases that run with no API key |
 | **Interop** | the same tools exposed over MCP, with the same gate |
 
 The design question running through the whole thing: **a language model is a
@@ -34,7 +34,7 @@ graph TB
         direction TB
         R["Routes<br/>/api/auth /api/chat /api/agent /api/calendar<br/>/api/mail /api/notifications /api/approvals /api/insights"]
         GR["Guardrails<br/>input · trust · tool · output"]
-        G["LangGraph supervisor<br/>router + 9 agents"]
+        G["LangGraph supervisor<br/>router + 5 nodes"]
         GW["LLM gateway<br/>cache · timeout · retry · fallback · cost"]
         S["Services<br/>conversations · credits · rate limit<br/>notifications · scheduler · traces"]
         GO["Google layer<br/>calendar.ts · gmail.ts"]
@@ -98,64 +98,49 @@ This is the core. One router decides; one agent runs.
 
 ```mermaid
 graph LR
-    START(["START"]) --> ROUTER["router<br/>writes state.plan"]
-    ROUTER --> NEXT{"nextInPlan()"}
+    START(["START"]) --> R{"router"}
 
-    NEXT -->|"plan[step]"| SEARCH["search"]
-    NEXT --> CHAT["chat"]
-    NEXT --> CODING["coding"]
-    NEXT --> PDF["pdf"]
-    NEXT --> PPT["ppt"]
-    NEXT --> IMAGE["image"]
-    NEXT --> VISION["vision"]
-    NEXT --> DOCQA["docqa"]
-    NEXT --> WS["workspace"]
+    R -->|"general knowledge"| C["chat<br/>one-shot, no tools"]
+    R -->|"needs a tool"| S["studio<br/>ReAct over 5 tools"]
+    R -->|"their calendar/mail"| W["workspace<br/>ReAct over 16 tools"]
+    R -->|"image upload"| V["vision"]
+    R -->|"pdf upload"| D["docqa"]
 
-    SEARCH --> NEXT
-    CHAT --> NEXT
-    CODING --> NEXT
-    PDF --> NEXT
-    PPT --> NEXT
-    IMAGE --> NEXT
-    VISION --> NEXT
-    DOCQA --> NEXT
-    WS --> NEXT
+    S <--> ST["web_search · make_deck<br/>make_pdf · make_image<br/>write_code"]
+    W <--> WT["7 calendar · 6 mail<br/>3 notification"]
 
-    NEXT -->|"plan exhausted"| END(["END"])
+    C --> E(["END"])
+    S --> E
+    W --> E
+    V --> E
+    D --> E
 
-    style NEXT fill:#2563eb,color:#fff
+    style S fill:#1e3a8a,color:#fff
+    style W fill:#1e3a8a,color:#fff
 ```
 
-**The router returns a plan, not an agent.** `state.plan` is an ordered list and
-`state.planStep` tracks progress. Every node — the router and all nine agents —
-uses the same conditional edge: *"what is next in the plan?"*
+**Five nodes, two of which are loops.** The router answers one question — does
+this need the user's own Google data, does it need a tool at all, or is it a
+plain question?
 
-Most turns are one agent. Some need two:
+It was nine nodes once, with `search`, `pdf`, `ppt`, `image` and `coding` each
+their own node. That could not serve *"research the latest on RAG and make a
+deck"*, so a plan mechanism was added — and then removed, because the real
+problem was that those five never **decided** anything. Each was one model call,
+a parse and a render: a tool, not an agent. They are tools now, and the studio's
+ReAct loop does the deciding, after seeing each result.
 
-| Request | Plan |
+| Request | What happens |
 |---|---|
-| "what is a closure in js" | `["chat"]` |
-| "what's the latest Node version" | `["search", "chat"]` |
-| "research the latest on RAG and make a deck" | `["search", "ppt"]` |
-| "write a report on 2026 EV sales from current data" | `["search", "pdf"]` |
+| "explain closures" | `chat` — one model call, no tools, cheapest path |
+| "what's the latest Node version" | `studio` → `web_search` → answer with citations |
+| "research RAG and make a deck" | `studio` → `web_search` → `make_deck` using those results |
+| "a deck and a cover image" | `studio` → `make_deck` → `make_image` |
+| search comes back empty | `studio` reads that and **says so**, instead of writing a deck that pretends to be researched |
+| "am I free at 4pm" | `workspace` → `check_busy` |
 
-**This replaced a special case with a rule.** The first version routed to one
-agent and sent every node to `END`, with one hardcoded `search → chat` edge so a
-search could become a cited answer — an exception that admitted the limitation.
-Now `search → chat` is just the plan `["search", "chat"]`, with no edge dedicated
-to it, and the graph has **one edge shape everywhere**.
-
-`chat`, `pdf`, `ppt` and `coding` all read `state.searchResults` when a search
-step ran before them, so the research is actually used rather than gathered and
-discarded.
-
-Three safety properties, all asserted in the eval suite:
-
-- a plan is **capped** at `MAX_PLAN_STEPS` (3), because every step is billed
-- a trailing `search` gets a writer appended, because search cannot answer
-- a plan naming an unknown node **ends the turn** rather than hanging the graph
-
-Full detail in [02-CONCEPTS §2.14](02-CONCEPTS.md#214-multi-agent-plans).
+Full reasoning in
+[02-CONCEPTS §2.14](02-CONCEPTS.md#214-agent-or-tool-the-question-that-shaped-the-graph).
 
 ### How the router decides — three stages, cheapest first
 

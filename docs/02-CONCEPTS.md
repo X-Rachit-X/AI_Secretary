@@ -21,7 +21,7 @@ twelve sections below, you can defend this codebase.
 | [2.11](#211-prompt-injection-and-why-guardrails-are-shaped-this-way) | Prompt injection | the attack that shapes the design |
 | [2.12](#212-prompt-engineering-patterns-used-here) | Prompt patterns | the four that earn their keep |
 | [2.13](#213-caching-in-an-llm-app-the-six-layers) | Caching, all six layers | what is normally cached, and what we do |
-| [2.14](#214-multi-agent-plans) | Multi-agent plans | how one request runs two agents |
+| [2.14](#214-agent-or-tool-the-question-that-shaped-the-graph) | **Agent or tool?** | the distinction that shaped the graph |
 
 ---
 
@@ -433,7 +433,7 @@ You could write `if (intent === "calendar") …`. The graph buys three things:
 2. **Compile-time validation** of the wiring.
 3. **Composition.** `search → chat` was a one-line change, not a refactor.
 
-> 💡 **Be honest in an interview:** for nine agents and one hand-off, a switch
+> 💡 **Be honest in an interview:** for five nodes and no hand-off, a switch
 > statement would also work. The graph pays off when flows get genuinely
 > branching. Claiming you *needed* it here is a weaker answer than knowing when
 > you would.
@@ -1248,7 +1248,7 @@ Four patterns that earn their keep. Each solves a specific failure.
 wraps it in ` ```json `. `JSON.parse` throws and the paid call is wasted.
 
 ```ts
-// server/src/ai/agents/ppt.agent.ts
+// server/src/ai/content/documents.ts
 const PROMPT = `Create a professional presentation on the topic below.
 
 Return ONLY this format. No Markdown, no explanation, no code fences.
@@ -1285,7 +1285,7 @@ are eval cases for all three in
 
 ### Pattern 2: let the output shape signal intent
 
-The coding agent handles "build me a site" and "review this function". Rather than
+The code generator handles "build me a site" and "review this function". Rather than
 asking the model to also classify its own intent in a field you then parse, the
 **shape** of the output says which it did:
 
@@ -1508,108 +1508,108 @@ must never be cached or a deploy leaves browsers pinned to a deleted bundle.
 
 ---
 
-## 2.14 Multi-agent plans
+## 2.14 Agent or tool? The question that shaped the graph
 
-The router returns an **ordered list** of agents, not one agent. This is worth
-understanding because it is the difference between a router and a supervisor.
+This is the most useful distinction in the whole project, and getting it wrong
+cost two redesigns.
 
-### The problem a single agent cannot solve
+### The test
 
-> *"Research the latest on RAG and make a deck."*
+> **An agent DECIDES. A tool DOES.**
 
-That needs `search` (the research) and then `ppt` (the deck). With one-agent
-routing you get a deck written from training data, or research with no deck.
+Apply it to what this app had:
 
-The first version had exactly one exception to the one-agent rule — a hardcoded
-`search → chat` edge, so a web search could become a cited answer. **That
-exception was the design telling on itself.**
+| Was a "node" | What it actually did | Decides? |
+|---|---|---|
+| `search` | call Tavily, format results | **no** |
+| `pdf` | one model call → parse → render → save | **no** |
+| `ppt` | one model call → parse → render → save | **no** |
+| `image` | one model call → fetch image → save | **no** |
+| `coding` | one model call → parse files | **no** |
+| `chat` | one model call → prose | no, but needs no tools either |
+| `workspace` | loop: pick a tool, read the result, pick again | **yes** |
+| `vision` / `docqa` | decided by a MIME type, not a judgement | n/a |
 
-### The fix: a plan plus one rule
+Five of them had no loop and no choice. They were tools wearing an agent's
+costume — and because the graph treated them as agents, **the graph had to do
+their deciding for them**.
 
-```ts
-// server/src/ai/state.ts
-plan: Annotation<AgentName[]>({ reducer: (_p, next) => next, default: () => [] }),
-planStep: Annotation<number>({ reducer: (p, n) => (p ?? 0) + n, default: () => 0 }),
-```
+### What that cost: two wrong designs
 
-```ts
-// server/src/ai/graph.ts — the single routing rule
-export function nextInPlan(state: GraphStateType): AgentName | typeof END {
-  const plan = state.plan ?? [];
-  const step = state.planStep ?? 0;
+**Attempt 1 — one agent per request.** The router picked one of nine, and every
+node went to `END`. So *"research the latest on RAG and make a deck"* was
+impossible: you got a deck with no research, or research with no deck. There was
+one hardcoded exception, `search → chat`, which was the design admitting the
+problem existed.
 
-  if (step >= plan.length || step >= MAX_PLAN_STEPS) return END;
+**Attempt 2 — a plan.** The router returned an ordered list (`["search","ppt"]`)
+and the graph walked it. It worked, and it needed: two new state channels, a
+`parsePlan` function with four correction rules (de-duplicate, append a writer
+after `search`, fix an invalid follower, cap the length), a `nextInPlan` edge
+function, a `withPlanAdvance` wrapper, and 15 eval cases to keep all of that
+honest.
 
-  const next = plan[step];
-  return next && next in AGENT_NODES ? next : END;
-}
-```
+That is a **scheduler**. Written because the things being scheduled could not
+decide for themselves.
 
-Applied from the router **and from every agent**:
-
-```ts
-for (const source of ["router", ...AGENT_NAMES] as const) {
-  builder.addConditionalEdges(source, nextInPlan, ROUTE_MAP);
-}
-```
+### The fix: make them tools
 
 ```mermaid
 flowchart LR
-    R["router<br/>plan = [search, ppt]"] --> N1{"nextInPlan<br/>step 0"}
-    N1 -->|"search"| S["search agent<br/>writes searchResults"]
-    S --> N2{"nextInPlan<br/>step 1"}
-    N2 -->|"ppt"| P["ppt agent<br/>reads searchResults"]
-    P --> N3{"nextInPlan<br/>step 2"}
-    N3 -->|"past end"| E(["END"])
+    subgraph OLD["Before: 9 nodes + a plan"]
+        R1["router"] --> P["plan[]"] --> S1["search"] --> PP1["ppt"]
+    end
+
+    subgraph NEW["After: 5 nodes, 1 loop"]
+        R2["router"] --> ST["studio<br/>ReAct"]
+        ST <--> T["web_search<br/>make_deck<br/>make_pdf<br/>make_image<br/>write_code"]
+    end
+
+    OLD ==>|"delete the scheduler"| NEW
 ```
 
-**The special case disappeared.** `search → chat` is now just the plan
-`["search", "chat"]` — no edge dedicated to it. The graph went from "one edge
-per agent plus one exception" to **one edge shape everywhere**, and it gained a
-capability. That is the rare refactor that is both simpler and more powerful.
+The five became plain functions in `ai/content/`, wrapped as tools in
+`ai/tools/content.tools.ts`, and `studio` is a ReAct loop over them.
 
-### Agents stay unaware
+**Deleted:** `state.plan`, `state.planStep`, `parsePlan` and its four rules,
+`nextInPlan`, `withPlanAdvance`, four graph nodes, and 15 eval cases that
+existed only to test the scheduler.
 
-`planStep` is advanced by a wrapper in the graph, not by the agents:
+**Gained:** things a fixed plan structurally could not do.
 
-```ts
-function withPlanAdvance(agent: AgentFn): AgentFn {
-  return async (state) => ({ ...(await agent(state)), planStep: 1 });
-}
-```
+| Situation | Plan | ReAct loop |
+|---|---|---|
+| search returns nothing | still makes the deck, from training data | reads the empty result and says so |
+| first query too narrow | stuck with it | searches again with a better one |
+| turns out no research needed | wasted a billed step | skips it |
+| "a deck AND a cover image" | two steps, not expressible | two tool calls |
 
-So all nine agent files remain plain `state -> partial state` functions that
-know nothing about plans. Adding a tenth needs no plan awareness at all.
+### The general lesson
 
-### Three rules keep a plan executable
+Ask of any component: **does it make a choice based on something it learns at
+runtime?**
 
-A model asked for a list will produce nonsense sometimes, so `parsePlan`
-enforces:
+- Yes → it is an agent. Give it a loop and tools.
+- No → it is a tool. Give it to an agent.
 
-| Rule | Why |
+Getting this backwards produces exactly what happened here: orchestration code
+that exists to compensate for components that cannot orchestrate themselves.
+
+> 💡 This is the strongest thing to say about the project in an interview,
+> because it is a judgement call rather than a feature: *"I had nine agents and
+> then a planner. Both were wrong — five of those 'agents' never decided
+> anything, so they were tools. Making them tools of one ReAct loop deleted the
+> planner, four nodes and 15 tests, and gained adaptivity I couldn't express
+> before."*
+
+### What stayed a node, and why
+
+| Node | Why not a tool |
 |---|---|
-| de-duplicate | `chat -> chat` would waste a billed step |
-| a trailing `search` gets `chat` appended | search only gathers; something must write |
-| `search` followed by a non-consumer is corrected | `search -> image` is nonsense: image cannot read research |
-| capped at `MAX_PLAN_STEPS` (3) | every step is a billed agent run, so an unbounded plan is an unbounded bill |
-
-All four are asserted in
-[`router.eval.ts`](../server/src/evals/router.eval.ts), along with five cases
-that **walk a plan to completion** to prove it terminates — a plan that never
-reaches `END` would hang a real request.
-
-### What this is NOT
-
-It is not a re-planning supervisor that reconsiders after every step. That costs
-a model call per step and can loop. A plan decided **once**, capped, is
-predictable and cheap, and covers the combinations that actually come up.
-
-> 💡 The honest interview answer: *"It's a planner, not a re-planner. I chose
-> once-and-capped because the alternative is a model call per step plus loop
-> risk, for cases I don't have. If I needed dynamic replanning — retrying a
-> failed sub-step, or branching on a result — I'd add a supervisor node that
-> loops back, and I'd want the eval suite to show me the current one failing
-> first."*
+| `chat` | one-shot and tool-free. A plain question should not pay for a loop that decides it needs no tools. |
+| `studio` | the loop itself. |
+| `workspace` | also a loop, but separate: its 16 tools carry a human-approval gate and a very different system prompt. Merging the two would mean 21 tool descriptions competing for attention. |
+| `vision`, `docqa` | a file's MIME type decides them. That is a lookup, not a judgement, so it happens in the router with no model call. |
 
 ---
 

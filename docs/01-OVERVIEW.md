@@ -112,8 +112,8 @@ graph TB
         RT["routes/ — 9 route files"]
         GD["guardrails/ — 4 layers"]
         GR["ai/graph.ts — LangGraph supervisor"]
-        AG["ai/agents/ — 9 agents"]
-        TL["ai/tools/ — 16 tools"]
+        AG["ai/agents/ — 5 nodes"]
+        TL["ai/tools/ — 21 tools"]
         GW["ai/gateway.ts — every model call"]
         GO["google/ — calendar.ts · gmail.ts"]
         SV["services/ — credits · limits · alerts · traces"]
@@ -141,38 +141,34 @@ a deliberate choice, explained in [03-ARCHITECTURE §3.3](03-ARCHITECTURE.md).
 
 ---
 
-## 1.5 The nine agents and who picks them
+## 1.5 Five nodes, and who picks them
 
 ```mermaid
 graph LR
     START([message]) --> R{{"router<br/>picks ONE"}}
 
-    R --> C["chat<br/>general questions"]
-    R --> SE["search<br/>fresh info"]
-    R --> CO["coding<br/>build / review"]
-    R --> PD["pdf"]
-    R --> PP["ppt"]
-    R --> IM["image"]
-    R --> VI["vision<br/>image upload"]
-    R --> DQ["docqa<br/>pdf upload"]
-    R --> WS["workspace<br/>calendar + mail"]
+    R -->|"general knowledge"| C["chat<br/>one-shot"]
+    R -->|"needs a tool"| S["studio<br/>ReAct · 5 tools"]
+    R -->|"their calendar/mail"| W["workspace<br/>ReAct · 16 tools"]
+    R -->|"image upload"| V["vision"]
+    R -->|"pdf upload"| D["docqa"]
 
-    SE -.->|"results into state"| C
-
-    style WS fill:#1e3a8a,color:#fff
+    style S fill:#1e3a8a,color:#fff
+    style W fill:#1e3a8a,color:#fff
     style R fill:#2563eb,color:#fff
 ```
 
-Two things to notice:
+Two of the five are **ReAct loops** — they pick a tool, read the result, and
+decide what to do next. The other three answer in a single pass.
 
-1. **`search` does not finish the turn.** It fetches results into shared state and
-   hands off to `chat`, which writes the cited answer. The only two-node path in
-   the graph.
-2. **`workspace` is different in kind.** The other eight call a model once and
-   format the result. `workspace` is a loop that can call 16 tools in any order
-   until it has an answer.
+`studio` is where documents, decks, images, code and web search live, as
+**tools** rather than separate agents. That matters: it means
+*"research the latest on RAG and make a deck"* is two tool calls in one loop,
+and if the search returns nothing the model reads that and says so instead of
+writing a deck that pretends to be researched.
 
----
+It was nine agents once. [02-CONCEPTS §2.14](02-CONCEPTS.md#214-agent-or-tool-the-question-that-shaped-the-graph)
+explains why five of them were really tools, and what collapsing them deleted.
 
 ## 1.6 Tour the code in ten minutes
 
@@ -184,8 +180,8 @@ the project.
 | 1 | [`ai/state.ts`](../server/src/ai/state.ts) | 155 | the shared object every agent reads and writes |
 | 2 | [`ai/graph.ts`](../server/src/ai/graph.ts) | 130 | the whole agent system: nodes, edges, routing |
 | 3 | [`ai/router.node.ts`](../server/src/ai/router.node.ts) | 120 | how one agent gets chosen, cheapest check first |
-| 4 | [`ai/tools/calendar.tools.ts`](../server/src/ai/tools/calendar.tools.ts) | 180 | what a "tool" actually is |
-| 5 | [`ai/agents/workspace.agent.ts`](../server/src/ai/agents/workspace.agent.ts) | 165 | the ReAct loop, and the prompt that steers it |
+| 4 | [`ai/tools/content.tools.ts`](../server/src/ai/tools/content.tools.ts) | 300 | what a "tool" actually is, and the agent/tool line |
+| 5 | [`ai/agents/studio.agent.ts`](../server/src/ai/agents/studio.agent.ts) | 140 | the ReAct loop, and why it replaced five nodes |
 | 6 | [`guardrails/tool.guard.ts`](../server/src/guardrails/tool.guard.ts) | 230 | propose-then-approve |
 | 7 | [`routes/agent.routes.ts`](../server/src/routes/agent.routes.ts) | 240 | how an HTTP request becomes a graph run |
 

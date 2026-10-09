@@ -2,7 +2,7 @@
 
 Every file, what it does, and what it depends on. Use this as a map while you write.
 
-**Total: 90 source files** — 66 server, 24 web — plus 11 documents.
+**Total: 92 source files** — 68 server, 24 web — plus 13 guides.
 
 ---
 
@@ -29,6 +29,9 @@ ai-secretary/
 │       ├── guardrails/       policy, input, output, tool gate, trust boundary
 │       ├── google/           Calendar and Gmail, framework-free
 │       ├── ai/               the graph, agents, tools, models, gateway
+│       │   ├── agents/       5 nodes: chat, studio, workspace, vision, docqa
+│       │   ├── content/      what the studio MAKES (plain functions)
+│       │   └── tools/        21 tools: 16 Google + 5 content
 │       ├── generators/       PDF and PPTX rendering
 │       ├── services/         conversations, credits, limits, alerts, cron, traces
 │       ├── routes/           the HTTP surface
@@ -104,8 +107,8 @@ this way; this is what each file does.
 |---|---|
 | **`types.ts`** | `Suite`, `CaseResult`, and the offline/live split |
 | **`guardrails.eval.ts`** | 26 cases. Includes 5 **false-positive guards** - inputs that must NOT trip a rule |
-| **`parsers.eval.ts`** | 14 cases. The deck and document parsers must *degrade*, not throw; plus vector-store edge cases |
-| **`router.eval.ts`** | 21 live routing-accuracy cases, 4 offline attachment cases, and **15 offline plan cases** — 10 for the parser rules and 5 that walk a plan to completion to prove it terminates |
+| **`parsers.eval.ts`** | 14 cases, importing the **real** parsers from `ai/content/documents.ts` rather than copies — which immediately caught two unsound assertions the duplicates had hidden. The deck and document parsers must *degrade*, not throw; plus vector-store edge cases |
+| **`router.eval.ts`** | 20 live routing-accuracy cases, plus 7 offline parser cases and 4 offline attachment cases |
 | **`run.ts`** | The runner, 5 suites. `npm run eval` for offline, `-- --live` to add model calls. Exit 1 on failure, so it gates CI |
 
 ---
@@ -118,7 +121,7 @@ this way; this is what each file does.
 | **`ai/pricing.ts`** | USD per million tokens, per model | Cost is computed in one place from provider-reported counts. An unlisted model costs 0, which shows up as a suspiciously free agent on Insights. |
 | **`ai/models.ts`** | `getModel(role)`, `getFallbackModel(role)`, `getEmbeddings()` | Agents ask by **role** (`"router"`, `"vision"`), never by provider. Temperature is 0 where output is parsed by code, warmer where it is prose for a human. Models are cached per role. |
 | **`ai/state.ts`** | The `GraphState` annotation | Read this first when you want to understand the graph. Every node reads it and returns a partial update. |
-| **`ai/router.node.ts`** | Returns an ordered **plan** of agents | Three stages, cheapest first — see [03-ARCHITECTURE §3.4](03-ARCHITECTURE.md#how-the-router-decides--three-stages-cheapest-first). Parses the first valid word from the reply, because models answer `"Search."` and `"agent: coding"` often enough that a bare match is unsafe. |
+| **`ai/router.node.ts`** | Picks one of three handlers | Short now: once the content capabilities became tools there were only three things to choose between. Three stages, cheapest first — see [03-ARCHITECTURE §3.4](03-ARCHITECTURE.md#how-the-router-decides--three-stages-cheapest-first). Parses the first valid word from the reply, because models answer `"Search."` and `"agent: coding"` often enough that a bare match is unsafe. |
 | **`ai/embedding-cache.ts`** | Caches embeddings by content hash | An embedding is a pure function of (text, model), so caching cannot change a result — only skip paid work. Fixes doc Q&A re-embedding a PDF on every follow-up question. The model id is in the key because two embedding models produce vectors in **different spaces**, and mixing them wrecks retrieval silently. |
 | **`ai/graph.ts`** | Wires nodes and edges, compiles once | Compilation validates the wiring, so a typo in a destination fails at boot rather than mid-conversation. Also exports `AGENT_CATALOG`, which the UI picker reads — the list can never drift from the graph. |
 | **`ai/tools/context.ts`** | `ToolContext`, `tracked()`, `untrusted()` | Tools are built per run so they close over *this* turn's identity. `tracked()` returns tool errors as strings rather than throwing, so one failed call does not abort the ReAct loop. |
@@ -133,17 +136,25 @@ this way; this is what each file does.
 | **`notify.tools.ts`** | `create_reminder`, `list_notifications`, `remember_preference` | `remember_preference` is the long-term memory. Also exports `loadPreferences()`, used to build the workspace system prompt. |
 | **`index.ts`** | `createWorkspaceTools(userId)` | Binds all three sets together. |
 
-### `ai/agents/`
+### `ai/content/` — what the studio makes
+
+Plain functions with no framework types, exactly like `google/`. The studio's
+tools are thin wrappers over these, so the same code could be exposed over MCP
+or a REST route without change.
+
+| File | What it does | The detail worth knowing |
+|---|---|---|
+| **`search.ts`** | `searchWeb(query)` → numbered, citable results | Returns an empty result rather than throwing when there is no API key, so the caller can say "I could not search" and still answer. |
+| **`documents.ts`** | `makePdf()`, `makeDeck()` | Both ask for **tagged text, not JSON** — model JSON fails a dozen ways and each failure wastes a paid call, while a line format degrades. Exports its parsers so the evals test the real thing. |
+| **`media.ts`** | `makeImage()`, `writeCode()` | Image generation is two steps: a text model writes a detailed prompt first, because "a cat astronaut" improves enormously with lighting and lens. `writeCode` signals intent by output **shape** — `FILE:` blocks mean it built, prose means it reviewed. |
+
+### `ai/agents/` — the five nodes
 
 | File | Pattern | The detail worth knowing |
 |---|---|---|
-| **`workspace.agent.ts`** | **ReAct loop** | The heart of "chat with your calendar". Checks the Google grant *before* billing so a missing connection gives a clear message rather than a tool error deep in the loop. |
-| **`chat.agent.ts`** | one-shot | Two entry paths: direct (charges for `chat`) or via search (does **not** charge again — the search node already billed). |
-| **`search.agent.ts`** | one-shot, no prose | Fetch and format only. Numbers results `[1] [2]` so the chat prompt's citation instruction lines up. Degrades to empty results if there is no API key. |
-| **`coding.agent.ts`** | one-shot | Emits either `FILE:` blocks (→ an artifact with tabs and a live preview) or Markdown (→ a review). The model signals which by whether it emits file blocks — simpler than a separate intent field to parse. |
-| **`pdf.agent.ts`** | one-shot | Asks for **tagged plain text**, not JSON. JSON from a model fails a dozen ways and each failure throws away a paid call; a line format degrades instead — an unparsable line is skipped and the rest renders. |
-| **`ppt.agent.ts`** | one-shot | Same tagged format, plus slide **types** (`bullets` / `stats` / `conclusion`) mapping to layout functions. |
-| **`image.agent.ts`** | two-step | A text model first rewrites the request into a detailed image prompt. Bytes are downloaded and stored locally so the picture survives in the transcript. 90s abort timeout — the provider can hang. |
+| **`studio.agent.ts`** | **ReAct loop** | Replaced five nodes and the whole plan mechanism. Loops over the content tools, so it sees each result before choosing the next step — an empty search leads to it saying so, rather than writing a document that pretends to be researched. |
+| **`workspace.agent.ts`** | **ReAct loop** | Calendar and mail. Separate from studio because its 16 tools carry a human-approval gate and a very different prompt; merging them would put 21 descriptions in one context. |
+| **`chat.agent.ts`** | one-shot | The cheap path. No tools: a plain question should not pay for a loop that decides it needs no tools. |
 | **`vision.agent.ts`** | one-shot | Image passed inline as a base64 data URL. Checks `providerSupportsVision()` first for a clear message. |
 | **`docqa.agent.ts`** | RAG pipeline | extract → split → embed → similarity search → grounded answer. Extraction happens **before** billing: a scanned PDF with no text layer should cost nothing. |
 

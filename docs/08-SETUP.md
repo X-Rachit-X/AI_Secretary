@@ -87,8 +87,8 @@ OpenRouter if you use it. The two are not alternatives.
 > you set `LLM_PROVIDER=openai` and still want the docqa agent, set both keys.
 
 **Optional — web search.** <https://tavily.com> gives 1000 free searches a
-month. Without it the search agent degrades to plain chat and says the answer
-may not be current.
+month. Without it the studio's `web_search` tool reports that search is
+unavailable, and the model answers from its own knowledge and says so.
 
 ---
 

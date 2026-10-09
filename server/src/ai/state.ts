@@ -16,27 +16,19 @@ import type { UsageMeter } from "./gateway.js";
  *  - outputs : written by whichever agent ran
  */
 
+/**
+ * The graph's nodes.
+ *
+ * Shorter than it was: search / pdf / ppt / image / coding became TOOLS of the
+ * studio agent, because none of them decided anything — each was one model
+ * call, a parse and a render. See graph.ts.
+ */
 export type AgentName =
   | "chat"
-  | "search"
-  | "coding"
-  | "pdf"
-  | "ppt"
-  | "image"
+  | "studio"
+  | "workspace"
   | "vision"
-  | "docqa"
-  | "workspace";
-
-/**
- * Hard ceiling on plan length.
- *
- * Every step is a billed agent run, so an unbounded plan is an unbounded bill.
- * Two covers every combination that has come up; three leaves headroom.
- *
- * Lives here rather than in graph.ts because the router needs it too, and
- * state.ts imports neither — so there is no cycle.
- */
-export const MAX_PLAN_STEPS = 3;
+  | "docqa";
 
 export type UploadedFile = {
   path: string;
@@ -113,37 +105,11 @@ export const GraphState = Annotation.Root({
    * user picked one in the UI. The router node overwrites it with its answer,
    * so after the router runs this is always a real agent name.
    *
-   * With a multi-step plan this holds the agent that produced the FINAL answer,
-   * which is what gets stored on the message and shown as the badge.
+   * Stored on the assistant message and shown as the badge in the UI.
    */
   agent: Annotation<AgentName | "auto">({
     reducer: (_previous, next) => next,
     default: () => "auto",
-  }),
-
-  /**
-   * The ordered agents to run for this turn. Written once by the router.
-   *
-   * Most turns are a single agent, so this is usually one element. Some
-   * requests genuinely need two — "research the latest on X and make a deck"
-   * is `["search", "ppt"]` — and expressing that as a list is what lets the
-   * graph run them in order without a hardcoded edge per combination.
-   */
-  plan: Annotation<AgentName[]>({
-    reducer: (_previous, next) => next,
-    default: () => [],
-  }),
-
-  /**
-   * How many steps of the plan have finished.
-   *
-   * Incremented by the wrapper in graph.ts rather than by the agents, so the
-   * agents stay unaware that plans exist. The reducer SUMS, so a node returning
-   * `{ planStep: 1 }` advances by one regardless of where it is in the plan.
-   */
-  planStep: Annotation<number>({
-    reducer: (previous, next) => (previous ?? 0) + next,
-    default: () => 0,
   }),
 
   // ── outputs ───────────────────────────────────────────────────────────────
@@ -163,16 +129,6 @@ export const GraphState = Annotation.Root({
   artifacts: Annotation<Artifact[]>({
     reducer: (_previous, next) => next,
     default: () => [],
-  }),
-
-  /**
-   * Formatted web results. Written by the search node, read by the chat node.
-   * `undefined` means "no search happened"; "" means "search ran and failed",
-   * and the chat node words its answer differently in each case.
-   */
-  searchResults: Annotation<string | undefined>({
-    reducer: (_previous, next) => next,
-    default: () => undefined,
   }),
 
   /**

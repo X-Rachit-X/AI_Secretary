@@ -113,63 +113,113 @@ charged.
 
 ---
 
-## 5.3 "What's the latest on X?" — the search hand-off
+## 5.3 "Research the latest on RAG and make a deck" — the studio loop
 
-The only two-node path in the graph.
+The flow that one-agent routing could not serve, and the reason the content
+capabilities are tools.
 
 ```mermaid
 sequenceDiagram
-    participant RN as router
-    participant SA as search agent
-    participant TAV as Tavily
-    participant CA as chat agent
+    participant B as Browser
+    participant R as /api/agent/chat
+    participant RT as router
+    participant S as studio (ReAct)
     participant M as Model
+    participant T as content tools
+    participant G as Tavily / pptxgenjs
 
-    RN-->>SA: agent = "search"
-    SA->>SA: runBilled("search") — charges 5
-    SA->>TAV: search(query)
-    TAV-->>SA: { results[], images[] }
-    SA->>SA: format as "[1] title\nURL\ncontent"
-    SA-->>CA: state.searchResults = text, state.images = urls
+    B->>R: "research the latest on RAG and make a deck"
+    R->>RT: graph.invoke
+    RT-->>R: agent = "studio"
+    R->>S: run
 
-    Note over CA: searchResults !== undefined<br/>→ do NOT charge again
-    CA->>M: BASE_PROMPT + grounding block + history + question
-    M-->>CA: answer with [1][2] citations + Sources list
-    CA-->>CA: { response, images }
+    S->>M: system prompt + 5 tool schemas + message
+    M-->>S: call web_search({query:"latest RAG techniques 2026"})
+    S->>T: web_search
+    T->>G: Tavily
+    G-->>T: 5 results
+    Note over T: billed as "search"; results kept in<br/>outputs.research and wrapped as UNTRUSTED
+    T-->>M: numbered, fenced results
+
+    Note over M: READS the results before deciding
+    M-->>S: call make_deck({topic:"..."})
+    S->>T: make_deck
+    Note over T: uses outputs.research as the source of fact
+    T->>G: model writes outline -> pptxgenjs renders
+    G-->>T: .pptx bytes -> saveBuffer
+    T-->>M: {status:"created", downloadUrl, grounded:true}
+
+    M-->>S: final message, no tool calls
+    S-->>R: response + images + artifacts + flags
+    R-->>B: completed
 ```
 
-**The three-state field.** `searchResults` is `string | undefined`:
+### What makes this impossible with a plan
 
-| Value | Means | What chat does |
-|---|---|---|
-| `undefined` | no search ran | answers normally, charges for `chat` |
-| `""` | search ran, found nothing / no API key | answers from training data, adds "this may not be current" |
-| text | search worked | cites `[1] [2]`, ends with Sources, **does not charge again** |
+The model **reads the search result before choosing the next step.** So:
 
-Numbering the results `[1]`, `[2]` matters: the chat prompt instructs the model
-to cite by number, and those numbers have to line up with what it was shown.
+| If the search… | The loop… |
+|---|---|
+| returns nothing | says so, and does **not** make a deck that implies it was researched |
+| was too narrow | searches again with a better query |
+| turns out unnecessary | skips it and generates directly |
 
-**Files:** `ai/agents/search.agent.ts` → `ai/agents/chat.agent.ts`
+A plan decided before any of that is known can only barrel on.
+
+### Three details worth noticing
+
+**Research is kept in a side channel, not in graph state.**
+
+```ts
+// server/src/ai/tools/content.tools.ts
+outputs.research = result.text;        // a later make_deck reads this
+outputs.images.push(...result.images.slice(0, 6));
+```
+
+A tool can only return a *string* to the model, so an image URL and a code
+artifact need another route to the browser. `StudioOutputs` is that route; the
+studio agent merges it into state after the loop ends. The same pattern
+`counters` already uses for flags and tool counts.
+
+**Search results are wrapped as untrusted content.**
+
+```ts
+return wrapUntrusted("web-search", result.text);
+```
+
+Web pages are third-party text, exactly like email bodies. Same guardrail
+([06-GUARDRAILS §6.4](06-GUARDRAILS.md)).
+
+**Each tool bills separately.**
+
+```ts
+const deck = await runBilled(userId, "ppt", () => makeDeck(topic, {...}));
+```
+
+So this turn costs `search` + `ppt`, and a malformed model response refunds
+rather than charging for an empty deck. Per-turn budgets (3 searches, 2
+generations) cap a confused loop.
+
+**Files:** `ai/agents/studio.agent.ts` → `ai/tools/content.tools.ts` →
+`ai/content/search.ts` + `ai/content/documents.ts` → `generators/ppt.generator.ts`
 
 ---
 
-## 5.4 "Make a deck about X"
+## 5.4 "Make a deck about X" — tagged text, not JSON
 
-The model writes a structure; code renders it.
+The generation step on its own, without research.
 
 ```mermaid
 flowchart TD
-    A["prompt: 'make a deck on RAG'"] --> B["router → ppt"]
-    B --> C["runBilled('ppt') — charge 10"]
-    C --> D["model: tagged text, not JSON"]
-    D --> E["parseDeck()"]
-    E --> F{"any slides parsed?"}
-    F -->|"no"| G["throw → runBilled refunds"]
-    F -->|"yes"| H["renderDeck(spec)"]
-    H --> I["cover + per-type layouts"]
-    I --> J["Buffer"]
-    J --> K["saveBuffer() → storage/ + StoredFile row"]
-    K --> L["response: Markdown with a download link"]
+    A["studio calls make_deck({topic})"] --> B["runBilled('ppt') — charge 10"]
+    B --> C["model: tagged text, NOT json"]
+    C --> D["parseDeck()"]
+    D --> E{"any slides parsed?"}
+    E -->|"no"| F["throw → runBilled refunds"]
+    E -->|"yes"| G["renderDeck(spec)"]
+    G --> H["cover + per-type layouts"]
+    H --> I["Buffer → saveBuffer() → StoredFile row"]
+    I --> J["return downloadUrl to the model"]
 ```
 
 The model is asked for this, **not** JSON:
@@ -187,9 +237,9 @@ Title: Why RAG
 ```
 
 **Why not JSON?** Model JSON fails a dozen ways — a trailing comma, a smart
-quote, a stray ```` ```json ```` fence — and every failure throws away a call you
-already paid for. A line-based format degrades instead: an unparsable line is
-skipped and the rest still renders.
+quote, a stray ```` ```json ```` fence — and each failure throws away a call you
+already paid for. A line format **degrades**: an unparsable line is skipped and
+the rest still renders.
 
 The slide `Type:` maps to a layout function:
 
@@ -199,9 +249,15 @@ The slide `Type:` maps to a layout function:
 | `stats` | `addStats` | dark, big numbers in columns |
 | `conclusion` | `addConclusion` | accent colour, takeaways |
 
-The PDF agent is the same shape with `SECTION:` / `P:` / `B:` tags.
+`makePdf` is the same shape with `SECTION:` / `P:` / `B:` tags.
 
-**Files:** `ai/agents/ppt.agent.ts` → `generators/ppt.generator.ts` → `lib/storage.ts`
+> 💡 The eval suite imports `parseDeck` and `parseOutline` **directly** and feeds
+> them a code fence, a chatty preamble, a missing `Type:` line, an empty slide
+> and total garbage. The last one must yield **zero** slides, so the agent
+> refunds instead of charging.
+
+**Files:** `ai/content/documents.ts` → `generators/ppt.generator.ts` →
+`lib/storage.ts`
 
 ---
 

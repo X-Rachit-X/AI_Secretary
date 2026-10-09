@@ -16,14 +16,14 @@ important one: **a decision you cannot say "revisit when…" about is a guess.**
 | [6](#adr-6-one-google-oauth-client-for-sign-in-and-data) | One Google OAuth client for both jobs | accepted |
 | [7](#adr-7-signed-cookie-sessions-not-a-session-store) | Signed-cookie sessions | accepted, with a known limit |
 | [8](#adr-8-langgraph-for-the-agent-system) | LangGraph, and only LangGraph | accepted |
-| [9](#adr-9-one-agent-holds-all-16-tools) | One agent holds all 16 tools | accepted |
+| [9](#adr-9-one-agent-holds-all-16-google-tools) | One agent holds all 16 Google tools | accepted |
 | [10](#adr-10-human-approval-as-the-hard-safety-boundary) | Human approval as the hard boundary | accepted |
 | [11](#adr-11-an-in-process-llm-gateway) | An in-process LLM gateway | accepted |
 | [12](#adr-12-tagged-text-not-json-for-structured-output) | Tagged text, not JSON | accepted |
 | [13](#adr-13-sse-not-websockets) | SSE, not WebSockets | accepted |
 | [14](#adr-14-offline-first-evals) | Offline-first evals | accepted |
 | [15](#adr-15-a-trace-table-not-a-tracing-sdk) | A table, not a tracing SDK | accepted |
-| [16](#adr-16-a-planner-not-a-re-planning-supervisor) | A planner, not a re-planning supervisor | accepted |
+| [16](#adr-16-content-capabilities-are-tools-not-agents) | Content capabilities are tools, not agents | accepted, replaced ADR 16 v1 |
 | [17](#adr-17-cache-three-of-the-six-layers) | Cache three of the six layers | accepted |
 | [18](#adr-18-cron-in-process-with-a-worker-escape-hatch) | Cron in-process, with a worker escape hatch | accepted |
 
@@ -205,9 +205,9 @@ agent framework on top.
 compile-time validation of the wiring so a typo in a destination fails at boot
 rather than mid-conversation.
 
-**Trade-off, honestly.** For nine agents and one hand-off, a `switch` statement
-would also work. The graph is justified by composition (`search → chat` was a
-one-line edge) and by state being one object, not by necessity at this size.
+**Trade-off, honestly.** For five nodes, a `switch` statement would also work.
+The graph is justified by state being one inspectable object and by compile-time
+validation of the wiring, not by necessity at this size.
 
 **Why not a second framework.** Two agent abstractions means debugging through
 both, and one is enough.
@@ -218,7 +218,7 @@ is where a graph stops being a nicety.
 
 ---
 
-## ADR 9: One agent holds all 16 tools
+## ADR 9: One agent holds all 16 Google tools
 
 **Decision.** `workspace` has all seven calendar, six mail and three
 notification tools, rather than separate calendar and mail agents.
@@ -273,9 +273,9 @@ trail. Per-recipient allowlists would be the gentle version.
 [`ai/gateway.ts`](../server/src/ai/gateway.ts) — cache, timeout, retry with
 jittered backoff, fallback provider, and token/cost accounting.
 
-**Why.** The alternative was `model.invoke()` in nine agents: nine copies of the
-retry logic, nine places that forget the timeout, and no way to answer "what did
-today cost".
+**Why.** The alternative was `model.invoke()` scattered across every agent and
+content function: a copy of the retry logic in each, several that forget the
+timeout, and no way to answer "what did today cost".
 
 **Explicitly not a deployed gateway service.** It is a function. A hosted
 provider router (OpenRouter, LiteLLM, Portkey) is a *different* layer and can
@@ -387,35 +387,53 @@ worker, a split service. Then OpenTelemetry, and it will be the right choice
 
 ---
 
-## ADR 16: A planner, not a re-planning supervisor
+## ADR 16: Content capabilities are tools, not agents
 
-**Decision.** The router returns an ordered plan of up to three agents, decided
-**once**. Every node then follows the same rule: run `plan[planStep]`, advance,
-repeat until the plan is exhausted.
+**Decision.** `search`, `pdf`, `ppt`, `image` and `coding` are **tools** of a
+single ReAct agent (`studio`), not graph nodes. The graph has five nodes: `chat`,
+`studio`, `workspace`, `vision`, `docqa`.
 
-**Why.** One-agent routing could not serve requests that genuinely need two
-steps — *"research the latest on RAG and make a deck"* is `search` then `ppt`.
-The first version had a single hardcoded `search → chat` edge, which was the
-design admitting the gap existed. Generalising it to a list removed the special
-case **and** added the capability: the graph now has one edge shape everywhere
-instead of one per agent plus an exception.
+**Why.** The test is *does it decide anything?* Each of those five did exactly
+one model call, a parse and a render. No loop, no branch, nothing learned at
+runtime. They were tools, and treating them as agents forced the **graph** to do
+their deciding — in advance, from the prompt alone.
 
-**Why not a re-planning supervisor** (one that reconsiders after each step)?
-It costs a model call per step, and it can loop. A plan decided once and capped
-is predictable, cheap, and covers the combinations that actually occur.
+That produced two wrong designs in sequence:
 
-**Trade-off.** The plan cannot adapt to what it finds. If `search` returns
-nothing useful, `ppt` still runs and writes from training data. There is no
-retry of a failed sub-step, and no branching on a result.
+1. **One agent per request.** *"Research RAG and make a deck"* was impossible.
+   A hardcoded `search → chat` edge existed as the single exception, which was
+   the design admitting the gap.
+2. **A plan.** The router returned an ordered list and the graph walked it.
+   Worked, but needed two state channels, a `parsePlan` with four correction
+   rules, a `nextInPlan` edge function, a `withPlanAdvance` wrapper and 15 eval
+   cases — a scheduler, written because the scheduled things could not decide.
 
-**What keeps it safe.** Four parser rules (de-duplicate, a trailing `search`
-gets a writer, a non-consumer after `search` is corrected, length capped) plus
-five eval cases that walk a plan to completion to prove it terminates — a plan
-that never reaches `END` would hang a request.
+**What the refactor deleted.** `state.plan`, `state.planStep`, `parsePlan`,
+`nextInPlan`, `withPlanAdvance`, four graph nodes, and the 15 plan eval cases.
+Graph state went from 17 channels to 15.
 
-**Revisit when** you need retry of individual steps, branching on a result, or
-parallel agents. Then add a supervisor node that loops back — and get the
-evidence from the live eval suite first, rather than assuming.
+**What it gained** — things a fixed plan structurally cannot do: reacting to an
+empty search instead of writing an unresearched document; re-querying when the
+first search was too narrow; skipping research that turns out to be unnecessary;
+and producing two artefacts in one turn.
+
+**Trade-off.** A ReAct loop is less predictable than a plan: the model chooses
+how many tool calls to make, so cost per turn varies. Mitigated by per-turn
+budgets in `content.tools.ts` (3 searches, 2 generations) and
+`recursionLimit: 18`. Tool-selection accuracy also matters more now, which puts
+real weight on the tool descriptions.
+
+**Why `studio` and `workspace` are separate loops.** Merging them would mean 21
+tool descriptions competing for attention in one prompt, and the Google tools
+carry a human-approval gate and a very different system prompt. Two focused
+loops beat one crowded one.
+
+**Why `chat` is still one-shot.** A plain question should not pay for a loop
+whose only decision is that it needs no tools.
+
+**Revisit when** a content capability starts needing to make a runtime choice —
+then it becomes an agent, and the honest move is to give it its own loop rather
+than branch inside a tool.
 
 ---
 

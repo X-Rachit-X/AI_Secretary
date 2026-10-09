@@ -41,7 +41,7 @@ can use the same capabilities.
 | 💻 **Code** | Build projects as artifacts with a live preview, or review existing code |
 | 🔌 **MCP** | The same calendar and mail tools in Claude Desktop or Cursor |
 | 🛡️ **Guardrails** | Four layers, including human approval before any irreversible action |
-| 🧪 **Evals** | 44 offline cases that run in under a second with no API key |
+| 🧪 **Evals** | 51 offline cases that run in under a second with no API key |
 | 📊 **Insights** | Cost, latency and guardrail activity per agent |
 
 ---
@@ -63,7 +63,7 @@ Calendar + Gmail in one consent) and one LLM API key. Full walkthrough in
 [docs/08-SETUP.md](docs/08-SETUP.md).
 
 ```bash
-npm run eval       # 44 offline cases, ~40ms, no API key needed
+npm run eval       # 51 offline cases, ~40ms, no API key needed
 npm run build      # typecheck + build both workspaces
 npm run mcp        # MCP stdio server for Claude Desktop / Cursor
 ```
@@ -135,9 +135,15 @@ graph TB
     HOST["Claude Desktop / Cursor"] -.->|"MCP"| MCP
 ```
 
-A **router** node picks one of nine agents. Eight answer in one pass. The ninth,
-`workspace`, is a ReAct loop with 16 calendar, mail and notification tools, and
-it is what makes multi-step requests work.
+A **router** picks one of five nodes. Two are ReAct loops — `studio` over five
+content tools (search, documents, decks, images, code) and `workspace` over 16
+Google tools. `chat` is one-shot for plain questions; `vision` and `docqa` are
+chosen by an uploaded file's type.
+
+It was nine agents once. Five of them never *decided* anything — each was one
+model call, a parse and a render — so they became tools, which deleted a whole
+plan-scheduling mechanism. See
+[02-CONCEPTS §2.14](docs/02-CONCEPTS.md#214-agent-or-tool-the-question-that-shaped-the-graph).
 
 Every model call goes through one gateway (retry, timeout, fallback, cache, cost),
 and every run is bracketed by guardrails and recorded as a trace.
@@ -154,7 +160,7 @@ keep going. Full index: [docs/README.md](docs/README.md).
 | 01 | [Overview](docs/01-OVERVIEW.md) | what this is, a 10-minute tour of the whole system |
 | 02 | [Concepts](docs/02-CONCEPTS.md) | **every concept taught with the real code** — tools, LangGraph, ReAct, RAG, MCP, SSE, OAuth, injection |
 | 03 | [Architecture](docs/03-ARCHITECTURE.md) | the design and every trade-off, with diagrams |
-| 04 | [File guide](docs/04-FILE-GUIDE.md) | all 90 files: what each does and the one detail worth knowing |
+| 04 | [File guide](docs/04-FILE-GUIDE.md) | all 92 files: what each does and the one detail worth knowing |
 | 05 | [Data flows](docs/05-DATA-FLOWS.md) | eight requests traced end to end |
 | 06 | [Guardrails](docs/06-GUARDRAILS.md) | the four safety layers, and the attack that shapes them |
 | 07 | [Evals and gateway](docs/07-EVALS.md) | how correctness is measured; retry, fallback, cost |
@@ -190,13 +196,14 @@ ai-secretary/
 │       ├── guardrails/    policy · input · output · tool gate · trust boundary
 │       ├── google/        calendar.ts · gmail.ts  (framework-free)
 │       ├── ai/            graph · router · state · models · gateway · pricing
-│       │   ├── agents/    9 agents
-│       │   └── tools/     16 tools in 3 files
+│       │   ├── agents/    5 nodes (studio + workspace are ReAct loops)
+│       │   ├── content/   what the studio makes
+│       │   └── tools/     21 tools: 16 Google + 5 content
 │       ├── generators/    pdf · pptx
 │       ├── services/      conversations · credits · limits · alerts · cron · traces
 │       ├── routes/        9 route files
 │       ├── mcp/           tools · http · stdio
-│       └── evals/         44 offline cases + 21 live
+│       └── evals/         51 offline cases + 21 live
 └── web/src/
     ├── lib/               api · sse · types
     ├── store/             auth · chat · notifications
@@ -266,7 +273,7 @@ Actual spend, per agent, is on the **Insights** page.
 
 ```bash
 npm run db:push           # once, after install: generates the Prisma client
-npm run eval              # 44 cases, ~40ms, no API key needed
+npm run eval              # 51 cases, ~40ms, no API key needed
 npm run eval -- --live    # + 21 router-accuracy cases
 ```
 
